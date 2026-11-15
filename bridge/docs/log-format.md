@@ -49,9 +49,9 @@ One record format serves three purposes: the JSONL session log on disk, the reco
 | `event` | UGS events other than status | `{type: alarm\|controller_state\|stream\|file_state\|probe\|setting\|interceptor, …}` |
 | `command` | lifecycle of a command queued through the bridge or UGS | `{id, origin, line, state: queued\|awaiting_operator\|sent\|ok\|error\|skipped\|alarm\|dropped, error_code?, alarm_code?, response?: [lines], expect?}` |
 | `file` | file loaded or stream started | `{action: loaded\|stream_start\|stream_end, path, sha256, lines, copied_to?}` |
-| `authority` | lock/unlock, level change, expiry, request from Claude | `{locked, level, reason, by}` |
+| `authority` | lock/unlock, level change, expiry, request from Claude | `{locked, level, reason, by}`. For a request from Claude (`by: claude`), `level` is the current level and `requested` the level asked for |
 | `client` | MCP/viewer client connect, disconnect, auth failure | `{client: mcp\|viewer, action, remote}` |
-| `notify` | notification sent or failed | `{trigger, text, sinks: {telegram?: ok\|failed\|disabled, slack?: …}}` |
+| `notify` | notification sent or failed | `{trigger, text, level?, sinks: {telegram?: ok\|failed\|disabled, slack?: …}}` |
 | `origin` | work offset changed or applied | `{wcs: "G54", wco: [x,y,z], method, tool?, bitsetter_ref?, origin_id?}` |
 | `tool` | tool change / BitSetter measurement | `{event: change_requested\|confirmed\|measured\|reference_set, tool?, trigger_mz?, ref?, wco_z?}` |
 | `job` | journal checkpoint highlights (not every line) and resume actions | `{event: started\|op_start\|paused\|stopped\|completed\|resume_planned\|resume_started, file_sha256, line?, op?}` |
