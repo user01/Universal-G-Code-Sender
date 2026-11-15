@@ -16,3 +16,6 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 node_modules/
+
+# Dev GUI isolated home (settings, userdir, bridge logs)
+.dev-home/

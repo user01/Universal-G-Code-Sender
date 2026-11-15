@@ -96,7 +96,14 @@ Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clea
 - D13 **Skip `command` records for successful file lines;** tx/rx cover them.
 - D14 **Worktrees:** the resurfacer path in `bridge/pyproject.toml` is absolute.
 
-### Upstream patch candidates (from A)
+### Decisions from the operator's review answers (2026-11-15)
+- D15 **Resume spin-up dwell:** after `M3`, use the file's own `G4 P…` if the program has one (the operator's post emits `G4 P2.0`), otherwise profile `spindle.spin_up_s` = 2.0 s.
+- D16 **Drop UGS console echoes from the session log.** `>>>` and `ok` console messages duplicate tx/rx. Other console messages stay.
+- D17 **Upstream core edits are approved** (P1, P3, P4 and any others needed). Keep each small and listed.
+- D18 **The dev GUI may run** with an isolated home (`bridge/.dev-home`, so the installed UGS's settings are untouched) against the simulator over TCP. The machine isn't connected, so no live machine work yet.
+- D19 **No machine capture or measurements for now.** Proceed on sourced or assumed values, all tracked in `bridge/docs/machine-ledger.md` (BitZero V2 13 mm sourced; bore unknown, so XY corner probing stays simulator-only).
+
+### Upstream patch candidates (from A), approved (D17)
 - P3 a listener hook in `BufferedCommunicator.sendByteImmediately`, so real-time bytes (hold, resume, reset, overrides) are logged as tx. Without it, operator real-time bytes are invisible in the log.
 - P4 make `CommunicatorEventDispatcher.communicatorListeners` thread-safe, or attach before `comm.connect`. This avoids a rare `ConcurrentModificationException` and the lost welcome lines at connect.
 

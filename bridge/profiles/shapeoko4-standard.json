@@ -38,18 +38,28 @@
     "verified": false
   },
   "bitzero": {
-    "plate_thickness": null,
+    "plate_thickness": 13.0,
     "plate_thickness_verified": false,
     "xy_offset": null,
     "max_travel": 25.0,
     "fast_feed": 200,
     "slow_feed": 50,
     "retract": 2.0,
-    "pin": "P"
+    "pin": "P",
+    "plate_thickness_source": "community-measured BitZero V2: 11 mm aluminum + 2 mm plastic base (ledger B1)",
+    "outer_size": [
+      58.0,
+      58.0
+    ],
+    "bore_diameter": null,
+    "bore_center_to_corner": null,
+    "_note": "XY corner probing needs bore_diameter and bore_center_to_corner (ledger B3); until measured only Z probing is allowed on the machine"
   },
   "spindle": {
     "control": "bitrunner",
-    "spin_up_s": 3.0
+    "spin_up_s": 2.0,
+    "prefer_file_dwell": true,
+    "_note": "resume preamble dwells for the file's own G4 after M3 when present, else spin_up_s (D15, ledger C5)"
   },
   "connect_resets_controller": true,
   "expected_settings": {
@@ -58,5 +68,6 @@
     "$132": 95
   },
   "rapid_mm_min": 5000,
-  "spoilboard_z_machine": null
+  "spoilboard_z_machine": null,
+  "_ledger": "bridge/docs/machine-ledger.md"
 }

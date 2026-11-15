@@ -138,7 +138,7 @@ public class BitSetterTest {
     public void realProfileLoads() throws Exception {
         MachineProfile real = TestFiles.profile();
         assertEquals(-5.0, real.safeZ(), 1e-9);
-        assertEquals(3.0, real.spinUpSeconds(), 1e-9);
+        assertEquals(2.0, real.spinUpSeconds(), 1e-9);
         assertEquals(0.05, real.repeatTolerance(), 1e-9);
         ProbeSequences.ProbeSequence s = ProbeSequences.bitsetterMeasure(real);
         assertFalse(s.warnings().isEmpty()); // position not verified yet

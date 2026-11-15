@@ -70,7 +70,10 @@ public final class BridgeService implements Runnable {
     @Override
     public void run() {
         try {
-            start(LookupService.lookup(BackendAPI.class), new SessionLog(BridgeHome.resolve()));
+            BackendAPI backend = LookupService.lookup(BackendAPI.class);
+            start(backend, new SessionLog(BridgeHome.resolve()));
+            DevConnect.maybeConnect(backend);
+            DevSnapshot.maybeStart();
         } catch (RuntimeException e) {
             LOGGER.log(Level.SEVERE, "ugs-bridge failed to start", e);
         }
