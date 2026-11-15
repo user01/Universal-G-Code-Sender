@@ -100,6 +100,16 @@ Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clea
 - P3 a listener hook in `BufferedCommunicator.sendByteImmediately`, so real-time bytes (hold, resume, reset, overrides) are logged as tx. Without it, operator real-time bytes are invisible in the log.
 - P4 make `CommunicatorEventDispatcher.communicatorListeners` thread-safe, or attach before `comm.connect`. This avoids a rare `ConcurrentModificationException` and the lost welcome lines at connect.
 
+### Review set (2026-11-15)
+HTML review reports for W0 and W1 (private artifacts): index https://claude.ai/artifact/Sjq1TZk1oD2FkXacBjn33S
+
+### Findings from the review runs
+- **A-2 (bug, fix before E/F):** `rx.cmd_id` drifts. UGS's `GetStatusCommand` sends `?` as whole lines at connect. Capture skips them in `commandSent`, so their `ok`s raise the early-answer counter, which is never cleared. On the simulator, 120 of 152 rx answers carried the wrong `cmd_id`; `command` records are unaffected. Fix: keep `?` lines on the waiting list without a tx record, plus a unit test and a simulator rerun.
+- J-2: round the stored BitSetter `ref` and WCO values to 0.001 mm (`-7.520000000000003` appears in the journal).
+- V-1 is confirmed: the viewer's marker ops still contain the following M6 block.
+- The simulator has no deceleration, so `Hold:1` lasts one report. Reset-after-hold tests are optimistic.
+- dr_ryan streams through UGS core against the simulator in 200 s at time-scale 20 (311-line default: 57 s).
+
 ### Follow-ups queued for W2
 - V-1 viewer: tool-change block outside operations (D11); live source with `GET /file/content` + `?vt=` WebSocket auth.
 - S-1 sim: XY probing (`G38.x` with X/Y) for BitZero corner tests; promote the Java compatibility harness into a JUnit integration test.

@@ -796,7 +796,7 @@ wheels = [
 [[package]]
 name = "shapeoko-surface"
 version = "0.1.0"
-source = { directory = "../../resurfacer" }
+source = { directory = "/Users/erik/code/resurfacer" }
 dependencies = [
     { name = "pyserial" },
     { name = "pyside6" },
@@ -927,8 +927,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
-    { name = "mcp", specifier = ">=1.20" },
-    { name = "shapeoko-surface", directory = "../../resurfacer" },
+    { name = "mcp", specifier = ">=2.3" },
+    { name = "shapeoko-surface", directory = "/Users/erik/code/resurfacer" },
     { name = "websockets", specifier = ">=15" },
 ]
 
@@ -941,7 +941,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "shapeoko-surface", directory = "../../resurfacer" }]
+requires-dist = [{ name = "shapeoko-surface", directory = "/Users/erik/code/resurfacer" }]
 
 [[package]]
 name = "uvicorn"

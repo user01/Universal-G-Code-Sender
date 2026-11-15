@@ -131,7 +131,7 @@ Show a warning if the stock web pendant is running: it is unauthenticated and li
 ## 5. ugs-mcp server
 
 - Python 3.12 managed with uv. Built on the official `mcp` SDK (FastMCP), stdio transport.
-- Registered with `claude mcp add ugs -- uv run --directory ../ugs-bridge/mcp ugs-mcp`.
+- Registered with `claude mcp add ugs -- uv run --directory /Users/erik/code/ugs-bridge/bridge --package ugs-mcp ugs-mcp` (see `bridge/mcp/README.md`).
 
 ### 5.1 Tools
 
