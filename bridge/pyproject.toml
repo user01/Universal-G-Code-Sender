@@ -12,8 +12,8 @@ package = false
 members = ["mcp", "sim"]
 
 [tool.uv.sources]
-# GRBL parser + simulator, reused from the sibling project. Read-only: never write into ../../resurfacer.
-shapeoko-surface = { path = "../../resurfacer" }
+# GRBL parser + simulator from the sibling project (read-only; never write into it).
+shapeoko-surface = { path = "/Users/erik/code/resurfacer" }  # absolute so git worktrees under .claude/worktrees resolve it too
 ugs-sim = { workspace = true }
 
 [dependency-groups]
