@@ -1,0 +1,6 @@
+# Never commit real credentials. Templates are *.example.json.
+notify.json
+token
+*.secret*
+.env
+.env.*

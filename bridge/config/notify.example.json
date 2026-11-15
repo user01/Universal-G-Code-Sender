@@ -1,0 +1,24 @@
+{
+  "format": "ugs-bridge-notify/1",
+  "telegram": {
+    "enabled": false,
+    "bot_token": "123456789:REPLACE_WITH_BOT_TOKEN_FROM_BOTFATHER",
+    "chat_id": "REPLACE_WITH_CHAT_ID"
+  },
+  "slack": {
+    "enabled": false,
+    "webhook_url": "https://hooks.slack.com/services/REPLACE/WITH/WEBHOOK"
+  },
+  "triggers": {
+    "stream_finished": true,
+    "stream_error": true,
+    "alarm": true,
+    "feed_hold_seconds": 60,
+    "tool_change_waiting": true,
+    "connection_lost": true,
+    "claude_authority_request": true,
+    "claude_message": true,
+    "progress_every_percent": 0
+  },
+  "rate_limit_per_minute": 6
+}
