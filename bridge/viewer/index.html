@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ugs-bridge viewer</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three-0.170.0/three.module.min.js",
+      "three/addons/": "./vendor/three-0.170.0/addons/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <header class="brand">
+        <strong>ugs-bridge viewer</strong>
+        <span id="mode" class="badge">offline</span>
+      </header>
+
+      <section>
+        <div class="row">
+          <label class="button primary" for="file-input">Open…</label>
+          <input id="file-input" type="file" multiple accept=".nc,.gcode,.ngc,.tap,.gc,.cnc,.txt,.json" hidden>
+          <button id="load-sample" type="button" hidden>Sample job</button>
+        </div>
+        <p class="hint">Drop a <code>.nc</code> file, optionally with its <code>.job.json</code> sidecar and a machine profile JSON.</p>
+        <div id="file-name" class="file-name"></div>
+        <div id="error" class="error" hidden></div>
+      </section>
+
+      <section id="job-section" hidden>
+        <h2>Job</h2>
+        <dl id="job-info" class="kv"></dl>
+      </section>
+
+      <section id="wco-section" hidden>
+        <h2>Work offset (G54) <span class="tag warn">assumed</span></h2>
+        <p class="hint">Offline there is no WCO from the machine. The default puts the stock front-left 20&nbsp;mm in from the envelope corner, on a spoilboard 10&nbsp;mm above the lowest Z. Envelope warnings depend on this.</p>
+        <div class="row xyz">
+          <label>X <input id="wco-x" type="number" step="0.1"></label>
+          <label>Y <input id="wco-y" type="number" step="0.1"></label>
+          <label>Z <input id="wco-z" type="number" step="0.1"></label>
+        </div>
+        <div class="row">
+          <button id="wco-apply" type="button">Apply</button>
+          <button id="wco-default" type="button">Default</button>
+          <span id="spoil-z" class="hint"></span>
+        </div>
+      </section>
+
+      <section id="ops-section" hidden>
+        <h2>Operations</h2>
+        <div class="row small">
+          <button id="ops-all" type="button">All</button>
+          <button id="ops-none" type="button">None</button>
+          <label><input id="show-rapids" type="checkbox" checked> rapids</label>
+          <label><input id="show-plunges" type="checkbox" checked> plunges</label>
+          <label><input id="show-markers" type="checkbox" checked> M6</label>
+        </div>
+        <ul id="legend" class="legend"></ul>
+      </section>
+
+      <section id="warn-section" hidden>
+        <h2>Warnings</h2>
+        <div id="warn-summary"></div>
+        <ul id="warn-list" class="warn-list"></ul>
+      </section>
+
+      <section id="view-section" hidden>
+        <h2>View</h2>
+        <div class="row">
+          <button data-view="top" type="button">Top</button>
+          <button data-view="front" type="button">Front</button>
+          <button data-view="iso" type="button">Iso</button>
+          <button data-view="machine" type="button">Machine</button>
+        </div>
+        <div class="row">
+          <label><input id="section-on" type="checkbox"> Section at Z</label>
+          <input id="section-z" type="range" min="-20" max="5" step="0.05" value="0" disabled>
+          <span id="section-val" class="mono"></span>
+        </div>
+        <div class="row">
+          <label><input id="show-stock" type="checkbox" checked> stock</label>
+          <label><input id="show-machine" type="checkbox" checked> machine</label>
+        </div>
+        <div class="row">
+          <button id="snap-png" type="button">Snapshot PNG</button>
+          <button id="export-glb" type="button">Export glTF</button>
+        </div>
+      </section>
+      <footer id="stats" class="hint"></footer>
+    </aside>
+
+    <main id="stage">
+      <div id="canvas-host"></div>
+      <div id="drop-overlay" hidden>Drop G-code (+ .job.json)</div>
+      <div id="empty" class="empty">Open or drop a G-code file to view it.</div>
+      <div id="info" class="info" hidden></div>
+      <div id="timeline" hidden>
+        <button id="play" type="button" title="Play / pause (space)">▶</button>
+        <select id="scrub-mode" title="Scrub by">
+          <option value="line">line</option>
+          <option value="time">time</option>
+        </select>
+        <input id="scrub" type="range" min="0" max="1" value="1" step="1">
+        <span id="scrub-readout" class="mono"></span>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
