@@ -4,3 +4,15 @@ token
 *.secret*
 .env
 .env.*
+
+# Local test corpus copied from ~/Downloads (personal job files; never commit)
+testdata/
+
+# Tool caches and envs
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/

@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ugs-bridge/status/1",
+  "title": "Bridge status",
+  "$defs": {
+    "ControllerStatus": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "Idle",
+            "Run",
+            "Hold",
+            "Jog",
+            "Alarm",
+            "Door",
+            "Check",
+            "Home",
+            "Sleep",
+            "Tool",
+            "Unknown"
+          ]
+        },
+        "substate": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mpos": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "wpos": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "wco": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "feed": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "spindle": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "overrides": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "feed": {
+              "type": "number"
+            },
+            "rapid": {
+              "type": "number"
+            },
+            "spindle": {
+              "type": "number"
+            }
+          }
+        },
+        "pins": {
+          "type": "object",
+          "properties": {
+            "raw": {
+              "type": "string",
+              "description": "Pn: letters as reported, '' if none"
+            },
+            "probe": {
+              "type": "boolean"
+            },
+            "x_limit": {
+              "type": "boolean"
+            },
+            "y_limit": {
+              "type": "boolean"
+            },
+            "z_limit": {
+              "type": "boolean"
+            },
+            "door": {
+              "type": "boolean"
+            },
+            "hold": {
+              "type": "boolean"
+            },
+            "reset": {
+              "type": "boolean"
+            },
+            "start": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "raw",
+            "probe"
+          ],
+          "additionalProperties": true
+        },
+        "accessories": {
+          "type": "object",
+          "properties": {
+            "spindle_cw": {
+              "type": "boolean"
+            },
+            "spindle_ccw": {
+              "type": "boolean"
+            },
+            "flood": {
+              "type": "boolean"
+            },
+            "mist": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": true
+        },
+        "buffer": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "planner": {
+              "type": "integer"
+            },
+            "rx": {
+              "type": "integer"
+            }
+          }
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Ln: if reported"
+        },
+        "raw": {
+          "type": "string",
+          "description": "the original <...> report"
+        }
+      },
+      "required": [
+        "state",
+        "mpos",
+        "wpos",
+        "pins",
+        "raw"
+      ],
+      "additionalProperties": true
+    },
+    "BridgeStatus": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "connection": {
+          "type": "object",
+          "properties": {
+            "connected": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "driver": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "firmware": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "connected"
+          ],
+          "additionalProperties": true
+        },
+        "controller": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ControllerStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "homed_this_connection": {
+          "type": "boolean"
+        },
+        "alarm": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "code": {
+              "type": "integer"
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "authority": {
+          "type": "object",
+          "properties": {
+            "locked": {
+              "type": "boolean"
+            },
+            "level": {
+              "type": "string",
+              "enum": [
+                "observe",
+                "query",
+                "motion",
+                "stream"
+              ]
+            },
+            "motion_expires_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "locked",
+            "level"
+          ],
+          "additionalProperties": true
+        },
+        "stream": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "idle",
+                "running",
+                "paused",
+                "stopping",
+                "completed",
+                "error"
+              ]
+            },
+            "file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "line_sent": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "line_acked": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "lines_total": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "interceptor": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "state": {
+              "type": "string"
+            },
+            "step": {
+              "type": "string"
+            },
+            "tool": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "tool": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "current": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "length_known": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "required": [
+        "seq",
+        "connection",
+        "controller",
+        "homed_this_connection",
+        "authority",
+        "stream"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "$ref": "#/$defs/BridgeStatus"
+}

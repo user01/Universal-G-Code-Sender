@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ugs-bridge/origins/1",
+  "title": "Origin store",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "ugs-bridge-origins/1"
+    },
+    "origins": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Origin"
+      }
+    }
+  },
+  "required": [
+    "format",
+    "origins"
+  ],
+  "$defs": {
+    "Origin": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wcs": {
+          "type": "string"
+        },
+        "wco": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "bitzero_xyz",
+            "bitzero_z",
+            "manual",
+            "restored",
+            "g10",
+            "observed"
+          ]
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bitsetter_ref": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "WCO_z - S_tool (SPEC \u00a711.4)"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pinned_to": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "job file SHA-256s this origin is pinned to"
+        },
+        "machine_profile": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "wcs",
+        "wco",
+        "method",
+        "created"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

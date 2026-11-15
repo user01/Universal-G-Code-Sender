@@ -68,6 +68,13 @@ Status 2026-11-15. Companion to `SPEC.md` (v0.1). Decisions here override the SP
 - Every notification is also written to the session log (`kind: "notify"`).
 - Later, not v1: two-way replies (for example, approving from Telegram). Approvals stay in the UGS GUI for now.
 
+## W0 status (2026-11-15): done
+- Contracts: `bridge/docs/api.md`, `bridge/docs/log-format.md`, `bridge/schema/*.schema.json` (validated), profile `bridge/profiles/shapeoko4-standard.json` (placeholders marked `verified: false`).
+- Module `ugs-platform-plugin-bridge` builds and is packaged into the app cluster. `BridgeLock` (starts locked) is tested, and the panel with the lock toggle and the `@OnStart` service are registered (checked in the generated layer). It has **not been launched in the GUI** because the serial port is in use: launching the dev app could auto-connect.
+- Python uv workspace `bridge/` (members `mcp`, `sim`) with resurfacer as a read-only path dependency.
+- Test corpus: `bridge/testdata/nc` (gitignored, personal data). See `bridge/TESTDATA.md`.
+- Decision D7: J1 (resume/BitSetter logic) is Java, not Python, so it works without Claude.
+
 ## Work packages
 
 The contract (W0) comes first and is done in the main session. After that, the four W1 packages share no files and can run as parallel subagents in separate worktrees.
@@ -97,7 +104,7 @@ The contract (W0) comes first and is done in the main session. After that, the f
 ### W2b: multi-tool jobs (SPEC §11)
 | Pkg | Scope | Depends |
 |---|---|---|
-| **J1** | Python core, pure and fully unit-tested: resume-point finder (planner-buffer aware), safe-point search, resume-plan generator, BitSetter `ref` math, journal schema. Test against the 150+ real files in `~/Downloads`. | C |
+| **J1** | **Java** (pure package `com.willwinder.ugs.nbp.bridge.job`, no NetBeans/Swing deps), so resume works from the UGS panel with no Claude session: resume-point finder (planner-buffer aware), safe-point search, resume-plan generator (`ResumePlan` schema), BitSetter `ref` math, journal model and writer, post-header/sidecar job model. Uses UGS's own `GcodeParser`. MCP reaches it via `POST /job/resume/plan`. Tested against `bridge/testdata/nc`. | W0 |
 | **J2** | Java: origins store (auto-record every WCO change), apply/verify, journal writer | A |
 | **J3** | Java: BitSetter tool-change interceptor (registered via `CommandInterceptorService.register`, stock one disabled), profile-driven park and probe | J2, B (simulated BitSetter pin) |
 | **J4** | Java panel: job setup checklist, resume dialog showing the plan; viewer shows the resume path | J1, J2, V1 |

@@ -15,9 +15,15 @@ This repo is a **fork of Universal Gcode Sender** (upstream `winder/Universal-G-
 - Opening the serial port resets the controller (DTR): it comes up in alarm and must be re-homed.
 - For testing without hardware, connect UGS with the **TCP** driver to the simulator in `bridge/sim` (no pty needed).
 
+## Hard limits (operator's standing instructions)
+
+- **Never open, configure or change serial/comm ports**, and never launch the dev UGS GUI (`dev.sh run`) until the operator says the port is free. The GUI may auto-connect to the machine. Verify plugin wiring statically: build, unit tests, generated layer.
+- Write only inside this repository. `../resurfacer` and `~/Downloads` are read-only. The only exception is `~/Library/Application Support/ugs-bridge/`, and tests must point `UGS_BRIDGE_HOME` at a temp dir instead.
+- Loopback TCP for the simulator in tests: bind `127.0.0.1` on an ephemeral port (0), never a fixed port.
+
 ## Rules
 
 - Never send motion to the real machine from tests or scripts. Hardware steps only via the checklist in `bridge/docs/hardware-validation.md` with the operator present.
-- Python: uv for everything; `uv run pytest`, `uv run ruff check`, `uv run mypy` before committing. Reuse the GRBL parser/simulator from `../resurfacer` rather than copying it.
+- Python: a uv workspace rooted at `bridge/` (members `mcp`, `sim`). From `bridge/`: `uv sync --all-packages`, then `uv run pytest`, `uv run ruff check`, `uv run mypy` before committing. Reuse the GRBL parser/simulator from `../resurfacer` rather than copying it.
 - Secrets (bridge token, Telegram/Slack credentials) live in `~/Library/Application Support/ugs-bridge/` with mode 0600, never in the repo.
 - Don't push or open PRs upstream unless asked. Commits end with the Co-Authored-By line from the session.

@@ -1,0 +1,770 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ugs-bridge/log-record/1",
+  "title": "Session log record / event",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "t": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mono": {
+      "type": "number",
+      "minimum": 0
+    },
+    "session": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "session",
+        "tx",
+        "rx",
+        "status",
+        "message",
+        "event",
+        "command",
+        "file",
+        "authority",
+        "client",
+        "notify",
+        "origin",
+        "tool",
+        "job"
+      ]
+    },
+    "src": {
+      "type": "string",
+      "enum": [
+        "operator",
+        "claude",
+        "ugs",
+        "controller",
+        "bridge"
+      ]
+    },
+    "data": {}
+  },
+  "required": [
+    "seq",
+    "t",
+    "mono",
+    "session",
+    "kind",
+    "src",
+    "data"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "session"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/session"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "tx"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/tx"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "rx"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/rx"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "status"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/status"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "message"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/message"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "event"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "command"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/command"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "file"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/file"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "authority"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/authority"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "client"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/client"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "notify"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/notify"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "origin"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/origin"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "tool"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/tool"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "job"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/job"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "session": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "bridge_start",
+            "bridge_stop",
+            "connect",
+            "disconnect",
+            "overflow"
+          ]
+        },
+        "port": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "driver": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "firmware": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ugs_version": {
+          "type": "string"
+        },
+        "bridge_version": {
+          "type": "string"
+        },
+        "dropped": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "additionalProperties": true
+    },
+    "tx": {
+      "type": "object",
+      "properties": {
+        "line": {
+          "type": "string"
+        },
+        "cmd_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "realtime": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^0x[0-9a-f]{2}$"
+        },
+        "file_line": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "line"
+      ],
+      "additionalProperties": true
+    },
+    "rx": {
+      "type": "object",
+      "properties": {
+        "line": {
+          "type": "string"
+        },
+        "cmd_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "line"
+      ],
+      "additionalProperties": true
+    },
+    "status": {
+      "$ref": "status.schema.json#/$defs/ControllerStatus"
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "INFO",
+            "VERBOSE",
+            "ERROR"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": true
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "alarm",
+            "controller_state",
+            "stream",
+            "file_state",
+            "probe",
+            "setting",
+            "interceptor"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true
+    },
+    "command": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "operator",
+            "claude",
+            "ugs",
+            "bridge"
+          ]
+        },
+        "line": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "awaiting_operator",
+            "sent",
+            "ok",
+            "error",
+            "skipped",
+            "alarm",
+            "dropped"
+          ]
+        },
+        "error_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "alarm_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "response": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expect": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "origin",
+        "line",
+        "state"
+      ],
+      "additionalProperties": true
+    },
+    "file": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "loaded",
+            "stream_start",
+            "stream_end"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "lines": {
+          "type": "integer"
+        },
+        "copied_to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": true
+    },
+    "authority": {
+      "type": "object",
+      "properties": {
+        "locked": {
+          "type": "boolean"
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "query",
+            "motion",
+            "stream"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "operator",
+            "claude",
+            "bridge"
+          ]
+        }
+      },
+      "required": [
+        "locked",
+        "level",
+        "by"
+      ],
+      "additionalProperties": true
+    },
+    "client": {
+      "type": "object",
+      "properties": {
+        "client": {
+          "type": "string",
+          "enum": [
+            "mcp",
+            "viewer"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "connect",
+            "disconnect",
+            "auth_failed",
+            "locked_refused"
+          ]
+        },
+        "remote": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "client",
+        "action"
+      ],
+      "additionalProperties": true
+    },
+    "notify": {
+      "type": "object",
+      "properties": {
+        "trigger": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "sinks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "failed",
+              "disabled",
+              "rate_limited"
+            ]
+          }
+        }
+      },
+      "required": [
+        "trigger",
+        "text",
+        "sinks"
+      ],
+      "additionalProperties": true
+    },
+    "origin": {
+      "type": "object",
+      "properties": {
+        "wcs": {
+          "type": "string",
+          "enum": [
+            "G54",
+            "G55",
+            "G56",
+            "G57",
+            "G58",
+            "G59"
+          ]
+        },
+        "wco": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "bitzero_xyz",
+            "bitzero_z",
+            "manual",
+            "restored",
+            "g10",
+            "observed"
+          ]
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bitsetter_ref": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "origin_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "wcs",
+        "wco",
+        "method"
+      ],
+      "additionalProperties": true
+    },
+    "tool": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "change_requested",
+            "confirmed",
+            "measured",
+            "reference_set",
+            "reference_invalidated"
+          ]
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trigger_mz": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ref": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "wco_z": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "additionalProperties": true
+    },
+    "job": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "started",
+            "op_start",
+            "paused",
+            "stopped",
+            "completed",
+            "resume_planned",
+            "resume_started"
+          ]
+        },
+        "file_sha256": {
+          "type": "string"
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "event",
+        "file_sha256"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

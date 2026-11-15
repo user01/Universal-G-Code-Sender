@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ugs-bridge/profile/1",
+  "title": "Machine profile",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "format": {
+      "const": "ugs-bridge-profile/1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "controller": {
+      "type": "string"
+    },
+    "envelope_mm": {
+      "type": "object",
+      "properties": {
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "min",
+        "max",
+        "verified"
+      ],
+      "additionalProperties": true
+    },
+    "homing_corner": {
+      "type": "string"
+    },
+    "safe_z_machine": {
+      "type": "number"
+    },
+    "tool_change_park": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "bitsetter": {
+      "type": "object",
+      "properties": {
+        "xy": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "start_z_machine": {
+          "type": "number"
+        },
+        "max_travel": {
+          "type": "number"
+        },
+        "fast_feed": {
+          "type": "number"
+        },
+        "slow_feed": {
+          "type": "number"
+        },
+        "retract": {
+          "type": "number"
+        },
+        "repeat_tolerance": {
+          "type": "number"
+        },
+        "pin": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "bitzero": {
+      "type": "object",
+      "properties": {
+        "plate_thickness": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "plate_thickness_verified": {
+          "type": "boolean"
+        },
+        "xy_offset": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max_travel": {
+          "type": "number"
+        },
+        "fast_feed": {
+          "type": "number"
+        },
+        "slow_feed": {
+          "type": "number"
+        },
+        "retract": {
+          "type": "number"
+        },
+        "pin": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "spindle": {
+      "type": "object",
+      "properties": {
+        "control": {
+          "type": "string",
+          "enum": [
+            "bitrunner",
+            "pwm",
+            "manual"
+          ]
+        },
+        "spin_up_s": {
+          "type": "number"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "connect_resets_controller": {
+      "type": "boolean"
+    },
+    "expected_settings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    }
+  },
+  "required": [
+    "format",
+    "name",
+    "envelope_mm",
+    "safe_z_machine",
+    "bitsetter",
+    "bitzero",
+    "spindle"
+  ]
+}

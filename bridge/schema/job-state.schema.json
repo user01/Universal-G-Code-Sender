@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ugs-bridge/job-state/1",
+  "title": "Job journal",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "ugs-bridge-job-state/1"
+    },
+    "updated": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "lines"
+      ],
+      "additionalProperties": true
+    },
+    "stream": {
+      "type": "string",
+      "enum": [
+        "running",
+        "paused",
+        "stopped",
+        "alarm",
+        "completed",
+        "crashed"
+      ]
+    },
+    "line_acked": {
+      "type": "integer",
+      "description": "highest file line answered ok"
+    },
+    "line_done": {
+      "type": "integer",
+      "description": "highest file line known executed (conservative)"
+    },
+    "last_mpos": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "operation": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tool": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "wco": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "bitsetter_ref": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "origin_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "modal": {
+      "type": "object",
+      "properties": {
+        "units": {
+          "type": "string",
+          "enum": [
+            "G20",
+            "G21"
+          ]
+        },
+        "distance": {
+          "type": "string",
+          "enum": [
+            "G90",
+            "G91"
+          ]
+        },
+        "plane": {
+          "type": "string",
+          "enum": [
+            "G17",
+            "G18",
+            "G19"
+          ]
+        },
+        "wcs": {
+          "type": "string"
+        },
+        "feed_mode": {
+          "type": "string",
+          "enum": [
+            "G93",
+            "G94"
+          ]
+        },
+        "motion": {
+          "type": "string"
+        },
+        "feed": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "spindle": {
+          "type": "string",
+          "enum": [
+            "M3",
+            "M4",
+            "M5"
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "session": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "format",
+    "updated",
+    "file",
+    "stream",
+    "line_acked",
+    "line_done"
+  ],
+  "$defs": {
+    "ResumePlan": {
+      "type": "object",
+      "properties": {
+        "plan_id": {
+          "type": "string"
+        },
+        "file_sha256": {
+          "type": "string"
+        },
+        "requested": {
+          "type": "object"
+        },
+        "resume_line": {
+          "type": "integer"
+        },
+        "safe_point": {
+          "type": "boolean",
+          "description": "true if resume_line is at/above clearance or an op start"
+        },
+        "operation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "ok"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "requires": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "home",
+              "restore_origin",
+              "tool_change",
+              "tool_measure",
+              "operator_confirm_mid_contour"
+            ]
+          }
+        },
+        "preamble": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "G-code sent before streaming from resume_line (SPEC \u00a711.6 steps 3-6)"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "plan_id",
+        "file_sha256",
+        "resume_line",
+        "safe_point",
+        "checks",
+        "requires",
+        "preamble",
+        "warnings"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

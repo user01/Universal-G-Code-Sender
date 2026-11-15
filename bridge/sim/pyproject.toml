@@ -1,0 +1,13 @@
+[project]
+name = "ugs-sim"
+version = "0.1.0"
+description = "GRBL 1.1 simulator on a TCP socket, for UGS's TCP connection driver (bridge/PLAN.md D4)"
+requires-python = ">=3.12,<3.14"
+dependencies = ["shapeoko-surface"]
+
+[project.scripts]
+ugs-sim = "ugs_sim.server:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"

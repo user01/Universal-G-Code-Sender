@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ugs-bridge/job/1",
+  "title": "Job sidecar <program>.job.json (SPEC \u00a76.3)",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "ugs-bridge-job/1"
+    },
+    "units": {
+      "type": "string",
+      "enum": [
+        "mm",
+        "in"
+      ]
+    },
+    "stock": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "material": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "size"
+      ],
+      "additionalProperties": true
+    },
+    "zero": {
+      "type": "object"
+    },
+    "clearance_z_work": {
+      "type": "number"
+    },
+    "spoilboard_limit_z": {
+      "type": "number"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "flat",
+              "ball",
+              "vbit",
+              "chamfer",
+              "other"
+            ]
+          },
+          "diameter": {
+            "type": "number"
+          },
+          "flute_length": {
+            "type": "number"
+          },
+          "feed": {
+            "type": "number"
+          },
+          "plunge": {
+            "type": "number"
+          },
+          "rpm": {
+            "type": "number"
+          },
+          "router_dial": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "diameter"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "z_range": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "plunge_feed": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "tool",
+          "lines"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "keepout",
+              "clamp",
+              "tape"
+            ]
+          },
+          "box": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "name",
+          "box"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "tabs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "top_z": {
+            "type": "number"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": [
+    "format",
+    "units"
+  ]
+}

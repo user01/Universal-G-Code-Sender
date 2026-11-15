@@ -1,0 +1,37 @@
+# uv workspace for the Python parts of ugs-bridge. Run everything from bridge/: `uv sync`, `uv run pytest`.
+[project]
+name = "ugs-bridge-workspace"
+version = "0.0.0"
+requires-python = ">=3.12,<3.14"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["mcp", "sim"]
+
+[tool.uv.sources]
+# GRBL parser + simulator, reused from the sibling project. Read-only: never write into ../../resurfacer.
+shapeoko-surface = { path = "../../resurfacer" }
+ugs-sim = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest>=9.1.1", "pytest-timeout>=2.4.0", "ruff>=0.16.10", "mypy>=2.4.0", "jsonschema>=4.25.1"]
+
+[tool.pytest.ini_options]
+testpaths = ["mcp/tests", "sim/tests"]
+timeout = 60
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "PT"]
+ignore = ["RUF001"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["mcp/src", "sim/src"]

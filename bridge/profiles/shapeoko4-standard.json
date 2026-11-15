@@ -1,0 +1,60 @@
+{
+  "format": "ugs-bridge-profile/1",
+  "name": "Shapeoko 4 Standard (user's)",
+  "controller": "grbl-1.1",
+  "_note": "Values marked verified=false are placeholders until measured / taken from the resurfacer machine capture.",
+  "envelope_mm": {
+    "min": [
+      -445,
+      -456,
+      -95
+    ],
+    "max": [
+      0,
+      0,
+      0
+    ],
+    "verified": false
+  },
+  "homing_corner": "back-right-top (machine 0,0,0)",
+  "safe_z_machine": -5.0,
+  "tool_change_park": [
+    -222.0,
+    -440.0,
+    -5.0
+  ],
+  "bitsetter": {
+    "xy": [
+      -4.0,
+      -449.0
+    ],
+    "start_z_machine": -5.0,
+    "max_travel": 90.0,
+    "fast_feed": 800,
+    "slow_feed": 100,
+    "retract": 2.0,
+    "repeat_tolerance": 0.05,
+    "pin": "P",
+    "verified": false
+  },
+  "bitzero": {
+    "plate_thickness": null,
+    "plate_thickness_verified": false,
+    "xy_offset": null,
+    "max_travel": 25.0,
+    "fast_feed": 200,
+    "slow_feed": 50,
+    "retract": 2.0,
+    "pin": "P"
+  },
+  "spindle": {
+    "control": "bitrunner",
+    "spin_up_s": 3.0
+  },
+  "connect_resets_controller": true,
+  "expected_settings": {
+    "$130": 445,
+    "$131": 456,
+    "$132": 95
+  }
+}
