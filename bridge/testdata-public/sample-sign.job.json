@@ -1,0 +1,127 @@
+{
+  "format": "ugs-bridge-job/1",
+  "units": "mm",
+  "stock": {
+    "size": [
+      120,
+      80,
+      12
+    ],
+    "material": "pine",
+    "origin": "front-left-top"
+  },
+  "zero": {
+    "x": "stock front-left",
+    "y": "stock front-left",
+    "z": "raw stock top",
+    "tool": "T02"
+  },
+  "clearance_z_work": 5,
+  "spoilboard_limit_z": -12.5,
+  "tools": [
+    {
+      "id": "T02",
+      "name": "2-flute downcut spiral 1/4 in",
+      "type": "flat",
+      "diameter": 6.35,
+      "flute_length": 25.4,
+      "feed": 1500,
+      "plunge": 400
+    },
+    {
+      "id": "T21",
+      "name": "2-flute upcut spiral 1/8 in",
+      "type": "flat",
+      "diameter": 3.175,
+      "flute_length": 12.7,
+      "feed": 1100,
+      "plunge": 350
+    }
+  ],
+  "operations": [
+    {
+      "name": "face",
+      "tool": "T02",
+      "description": "Face the top 0.5 mm",
+      "lines": [
+        35,
+        75
+      ]
+    },
+    {
+      "name": "pocket",
+      "tool": "T02",
+      "description": "Rounded pocket 6 mm deep",
+      "lines": [
+        76,
+        235
+      ]
+    },
+    {
+      "name": "holes",
+      "tool": "T21",
+      "description": "Four 8 mm through holes, helical",
+      "lines": [
+        236,
+        313
+      ]
+    },
+    {
+      "name": "profile",
+      "tool": "T21",
+      "description": "Cut out with four tabs",
+      "lines": [
+        314,
+        379
+      ]
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "tape",
+      "kind": "tape",
+      "box": [
+        [
+          0,
+          0,
+          -12
+        ],
+        [
+          120,
+          80,
+          -12
+        ]
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "at": [
+        35,
+        4.4
+      ],
+      "top_z": -9.3
+    },
+    {
+      "at": [
+        85,
+        4.4
+      ],
+      "top_z": -9.3
+    },
+    {
+      "at": [
+        35,
+        75.6
+      ],
+      "top_z": -9.3
+    },
+    {
+      "at": [
+        85,
+        75.6
+      ],
+      "top_z": -9.3
+    }
+  ]
+}

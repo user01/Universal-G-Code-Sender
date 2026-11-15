@@ -1,0 +1,9 @@
+{
+  "name": "ugs-bridge-viewer",
+  "private": true,
+  "type": "module",
+  "description": "ugs-bridge 3D viewer (static ES modules, no build step). Tests: node --test",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
