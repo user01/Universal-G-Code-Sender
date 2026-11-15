@@ -31,6 +31,11 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "PT"]
 ignore = ["RUF001"]
 
+[tool.ruff.lint.isort]
+# bridge/mcp (the directory) would otherwise make the `mcp` SDK look first-party.
+known-first-party = ["ugs_mcp", "ugs_sim"]
+known-third-party = ["mcp"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
