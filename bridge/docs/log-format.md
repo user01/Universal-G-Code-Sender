@@ -41,7 +41,7 @@ One record format serves three purposes: the JSONL session log on disk, the reco
 
 | kind | When | `data` (abbreviated; full shape in schema) |
 |---|---|---|
-| `session` | connect / disconnect / bridge start / bridge stop | `{event: start\|connect\|disconnect\|stop, port, driver, firmware?, ugs_version, bridge_version}` |
+| `session` | connect / disconnect / bridge start / bridge stop / queue overflow | `{event: bridge_start\|connect\|disconnect\|bridge_stop\|overflow, port, driver, firmware?, ugs_version, bridge_version, dropped?}` |
 | `tx` | every line written to the controller, including real-time bytes | `{line, cmd_id?, realtime?: "0x85"…, file_line?}` |
 | `rx` | every raw line from the controller **except** `<…>` status reports | `{line, cmd_id?}` |
 | `status` | status report changed (ignoring `FS` jitter below 1%), plus a heartbeat every 1 s | the `ControllerStatus` object (schema `status`) |
@@ -60,3 +60,20 @@ Rules:
 - `tx` and `rx` are recorded in order of the wire. `status` reports are filtered (above), but `?` polls are **not** logged as `tx` (they are implied by `status`).
 - `cmd_id` links `tx`, `rx` and `command` records. For bridge-originated commands it is `c-<request>-<index>`. For UGS-originated commands it is `u-<GcodeCommand.getId()>`.
 - File streaming at 100+ lines/s is logged in full. The writer must not block the communicator thread: use a bounded queue (≥ 100 000 records) drained by a writer thread. If the queue ever overflows, write a `session` record `{event: "overflow", dropped: n}`. Never drop silently.
+
+## Capture details (Java plugin, package A)
+
+How the plugin fills the records. Fields marked "extra" are additive (allowed by `additionalProperties`).
+
+- **Wire records.** `tx` comes from `ICommunicatorListener.commandSent`, `rx` and `status` from `rawResponseListener`, all on UGS's communicator event thread, so their order is the wire order. `file_line` is 1-based (`GcodeCommand.getCommandNumber() + 1`). `rx` lines are attributed to the oldest command still waiting for `ok`/`error`/`ALARM`; lines with nothing waiting have `src: controller` and no `cmd_id`. A `Grbl …` welcome (reset) clears the waiting list.
+- **Real-time bytes** (`!`, `~`, `0x18`, `0x85`, overrides, `?`) are written by UGS with `sendByteImmediately`, which has no listener. They are only logged when the bridge itself sends them (hook `Capture.recordRealtime`); `line` is the printable character or the hex value.
+- **`status`** is parsed from the raw GRBL 1.1 `<…>` report (values in the controller's reporting units; extra `units: "mm"|"inch"` when known). WCO, `Ov` and `A` are carried over between reports as GRBL intends. Extra `heartbeat: true` marks a record logged only because 1 s passed; heartbeats are only written while reports keep arriving. Firmware without `<…>` reports falls back to UGS's `ControllerStatusEvent` (positions in mm, `raw: ""`).
+- **`command`** records: `sent` and the final state (`ok`/`error`/`alarm`/`skipped`, with `response`, `error_code`, `alarm_code`) for every command that is not a file line; for file lines only failures and skips (successful lines are fully described by `tx`/`rx`).
+- **`src`** defaults: file lines, interceptor commands, commands sent while the controller is initializing and UGS's own `Get…Command` queries are `ugs`; other commands are `operator`. Commands registered with `CommandOrigins` (the API) use their own `cmd_id` and `src`.
+- **`event`** extras: `controller_state {state, previous}` (UGS state names, lower case); `alarm {code, line}` from the `ALARM:n` line plus `alarm {ugs_alarm}` from UGS's `AlarmEvent`; `stream {event: started|paused|resumed|canceled|complete|paused_on_error}`; `file_state {state, path}`; `probe {position, units: "mm", coordinates: "machine"}`; `setting {scope: firmware, key, value}` or `{scope: ugs}`; `interceptor {state, previous, interceptor?, trigger?, file_line?, step?, options?}`.
+- **`file`** extras: `stream_end` has `result: complete|canceled`; `stream_start` may have `processed_path`.
+- **`session`** extras: `disconnect` may have `reason: "connection_closed"`; `bridge_start` has `home`.
+- **`message`**: trailing newlines are stripped; UGS's VERBOSE echoes of `<…>` reports are dropped (they are in `status`).
+- **`authority`** (until authority levels exist): `level` is `observe` when locked and `query` when unlocked.
+
+Validate a log with `cd bridge && uv run python scripts/validate_log.py <session.jsonl>`.
