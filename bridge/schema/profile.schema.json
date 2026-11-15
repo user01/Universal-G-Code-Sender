@@ -160,6 +160,20 @@
       "additionalProperties": {
         "type": "number"
       }
+    },
+    "rapid_mm_min": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "max rapid rate for time estimates when a file has no (Rapids:) header"
+    },
+    "spoilboard_z_machine": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "machine Z of the spoilboard surface with the reference tool; null until measured"
     }
   },
   "required": [

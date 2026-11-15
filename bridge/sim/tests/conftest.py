@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
+
 from ugs_sim.machine import ShapeokoGrbl
 from ugs_sim.profile import load_profile
 from ugs_sim.server import ThreadedSimServer

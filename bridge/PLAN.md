@@ -75,6 +75,38 @@ Status 2026-11-15. Companion to `SPEC.md` (v0.1). Decisions here override the SP
 - Test corpus: `bridge/testdata/nc` (gitignored, personal data). See `bridge/TESTDATA.md`.
 - Decision D7: J1 (resume/BitSetter logic) is Java, not Python, so it works without Claude.
 
+## W1 status (2026-11-15): all five packages merged
+
+| Pkg | Result | Tests |
+|---|---|---|
+| A capture + log | `bridge.capture`, `bridge.log`: every UGS source → JSONL per log-format.md, non-blocking writer, file archive, ring buffer for the API | Java module 104/104 (with J1) |
+| B simulator | `bridge/sim`: `ugs-sim` on loopback TCP; BitSetter/BitZero pins, tool length, DTR-reset alarm, real-time bytes, time scale. **UGS's own GrblController drove it** (connect, home, jog, probe, tool change, full 26 676-line stream) | 32 + opt-in Java check |
+| C MCP + file tools | `bridge/mcp`: Observe/Query tools, `analyze_file`, `prepare_file`, bridge client (lock/403/down mapping), fake bridge, `docs/post-headers.md` | 87 |
+| D viewer V1 | `bridge/viewer`: offline Three.js 0.170 (vendored), ops colored, scrubber, section, warnings, PNG/glb; dr_ryan builds in ~55 ms | 30 (node) |
+| J1 job core | `bridge.job`: job model, safe points, resume-point finder, `ResumePlanner`, BitSetter math, probe sequences, journal, origin store | (in the 104) |
+
+Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clean. **Nothing has run in the UGS GUI or on the machine yet.**
+
+### Decisions from the W1 reports
+- D8 **Preamble order:** retract first (`G21 G53 G0 Z<safe>`), then modal restore. SPEC §11.6 is updated to match.
+- D9 **BitSetter `ref` invalidation:** only when the homing configuration changes (a signature of `$22`–`$27`) or the BitSetter position in the profile changes, not on every homing cycle. A re-measure of the same tool on resume still guards against drift.
+- D10 **Tool-change return:** after measuring, the interceptor returns to the **pre-change XY at safe Z** before handing back to the stream (J3), so the program's next `G0 Z` doesn't come down at the park position.
+- D11 **Tool-change block ownership:** the `M6` block belongs to **no operation**. An operation ends before an intervening `M6` (C and J1 already do this; the viewer must align, follow-up V-1).
+- D12 **Sidecar name:** canonical `<stem>.job.json`; `<file>.nc.job.json` is also accepted.
+- D13 **Skip `command` records for successful file lines;** tx/rx cover them.
+- D14 **Worktrees:** the resurfacer path in `bridge/pyproject.toml` is absolute.
+
+### Upstream patch candidates (from A)
+- P3 a listener hook in `BufferedCommunicator.sendByteImmediately`, so real-time bytes (hold, resume, reset, overrides) are logged as tx. Without it, operator real-time bytes are invisible in the log.
+- P4 make `CommunicatorEventDispatcher.communicatorListeners` thread-safe, or attach before `comm.connect`. This avoids a rare `ConcurrentModificationException` and the lost welcome lines at connect.
+
+### Follow-ups queued for W2
+- V-1 viewer: tool-change block outside operations (D11); live source with `GET /file/content` + `?vt=` WebSocket auth.
+- S-1 sim: XY probing (`G38.x` with X/Y) for BitZero corner tests; promote the Java compatibility harness into a JUnit integration test.
+- J-1 job: BitZero XYZ-corner sequence; the envelope Z check uses the post-measurement WCO.
+- A-1 capture: confirm rx `src` follows the originating command (api.md additions); real-time bytes once P3 lands.
+- Operator's post (`post/user.py`): in step20/29/30/32/50 the `(CUT EXTENT …)` header is offset −20 mm in X/Y from the G-code (blank vs. jig coordinates). `analyze_file` warns about it.
+
 ## Work packages
 
 The contract (W0) comes first and is done in the main session. After that, the four W1 packages share no files and can run as parallel subagents in separate worktrees.

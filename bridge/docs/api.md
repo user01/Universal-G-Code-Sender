@@ -83,3 +83,11 @@ Setting writes (`$n=value`, `$RST`, `$N0=…`) are classed as motion. Python ref
 
 ## Versioning
 Breaking changes bump `/v1`. Additive fields are allowed at any time; clients must ignore unknown fields.
+
+## Additions after W1 (2026-11-15)
+
+- `GET /file/content`: the loaded program as `text/plain` (Observe; viewer allowed). Needed by the live viewer, which can't read local paths.
+- **Viewer WebSocket auth:** browsers can't set `Authorization` on a WebSocket, so the viewer passes its token as `WS /events?vt=<token>` (or the `Sec-WebSocket-Protocol: ugs-bridge.v1, vt.<token>` subprotocol). Only `v.`-class viewer tokens are accepted this way, never the MCP token. The server is loopback-only.
+- **Ids:** `CommandResult.id` identifies the request (`c-17`). In `command` log records, `id` and `cmd_id` identify one line (`c-17-0`).
+- **`src` on `rx`:** a reply to a command carries the `src` of whoever sent that command (`operator`, `claude`, `ugs`, `bridge`). Unsolicited controller output is `controller`.
+- **Operation addressing:** names can repeat within a file, so `{operation: …}` also accepts the 1-based operation number (`5` or `"OP 05"`).

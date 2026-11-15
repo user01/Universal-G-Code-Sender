@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import BRIDGE, TESTDATA, needs_testdata
+from mcp_paths import BRIDGE, TESTDATA, needs_testdata
 
 from ugs_mcp.gcode.analyze import analyze_path, analyze_text
 from ugs_mcp.gcode.headers import parse_headers, parse_stock, parse_tool, parse_zero

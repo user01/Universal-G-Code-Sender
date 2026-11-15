@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
-from conftest import TESTDATA, needs_testdata
+from mcp_paths import TESTDATA, needs_testdata
 
 from ugs_mcp.gcode.prepare import PrepareError, apply_edits, prepare
 

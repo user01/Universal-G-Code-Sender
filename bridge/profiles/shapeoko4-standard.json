@@ -56,5 +56,7 @@
     "$130": 445,
     "$131": 456,
     "$132": 95
-  }
+  },
+  "rapid_mm_min": 5000,
+  "spoilboard_z_machine": null
 }

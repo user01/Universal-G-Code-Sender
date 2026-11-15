@@ -286,7 +286,7 @@ On `M6 Tn`:
 2. Notify (UGS dialog, Telegram/Slack, MCP event) with the tool from the job data: "Change to T21 Whiteside RU1600 1/8 in upcut".
 3. The operator confirms in UGS. Claude can't confirm a tool change.
 4. Check the probe input is clear, measure on the BitSetter, set `WCO_z = S_new + ref`, and log both values.
-5. Return to `G53 Z<safe>` and continue the stream. The program's own `M3` and moves follow. If the next motion line would start below the clearance height without its own retract, warn.
+5. Return to the **pre-change XY at `G53 Z<safe>`** and continue the stream. The program's own `M3` and moves follow. If the next motion line would start below the clearance height without its own retract, warn.
 
 At job start, the setup checklist (§11.7) measures the first tool to set `ref`.
 
@@ -306,8 +306,8 @@ At job start, the setup checklist (§11.7) measures the first tool to set `ref`.
 - **Resume plan** (shown as text and in the viewer, confirmed by the operator before it runs):
   1. Check that the machine is homed in this connection and that WCO matches the journal's origin. If not, offer *recover origin* (§11.3).
   2. Check that the correct tool for the resume line is in the collet. If the tool may have changed or the length is unknown (power cut, different tool), run the tool-change interceptor sequence, including the BitSetter measurement.
-  3. Restore the modal state (units, distance mode, plane, WCS, feed mode).
-  4. `G53 G0 Z<safe>`, then `G0 X Y` to the resume point, then `G0 Z<clearance_z_work>`.
+  3. Retract first with `G21 G53 G0 Z<safe>` (it carries its own units, so it can't be read as inches), then restore the modal state (units, distance mode, plane, WCS, feed mode).
+  4. `G0 X Y` to the resume point, then `G0 Z<clearance_z_work>`.
   5. `M3`, then `G4 P<spin-up>` (profile; the BitRunner switches power and the operator sets RPM).
   6. `G1 Z<target>` at the operation's **plunge feed**, then the modal cutting feed for the rest.
   7. Stream from the resume line through the end, with tool changes handled as usual.

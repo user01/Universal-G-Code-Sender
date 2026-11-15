@@ -7,13 +7,10 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
+from mcp_paths import BRIDGE, SCHEMA_DIR, TESTDATA, needs_testdata  # noqa: F401  (re-exported)
 from referencing import Registry, Resource
 
 from ugs_mcp.testing.fake_bridge import FakeBridge
-
-BRIDGE = Path(__file__).resolve().parents[2]
-SCHEMA_DIR = BRIDGE / "schema"
-TESTDATA = BRIDGE / "testdata" / "nc"
 
 
 def _registry() -> Registry:
@@ -73,9 +70,3 @@ def fake(home: Path, validate: Callable[[str, Any], None]) -> Iterator[FakeBridg
 
 def testdata(name: str) -> Path:
     return TESTDATA / name
-
-
-needs_testdata = pytest.mark.skipif(
-    not TESTDATA.is_dir() or not any(TESTDATA.glob("*.nc")),
-    reason="bridge/testdata/nc is not present (gitignored personal files)",
-)
