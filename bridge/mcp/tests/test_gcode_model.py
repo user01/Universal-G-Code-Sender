@@ -124,3 +124,51 @@ def test_analyze_spindle_off_and_rapid_into_stock() -> None:
     text = "G0 X0 Y0 Z5\nG0 Z-1\nG1 X10 F100\nM2\n"
     codes = {w["code"] for w in analyze_text(text)["warnings"]}
     assert {"spindle-off", "rapid-below-zero", "no-profile"} <= codes
+
+
+BITRUNNER = {
+    **PROFILE,
+    "spindle": {"control": "bitrunner", "s_on_verified": 18000, "s_off_verified": 10000},
+}
+
+
+def _codes(r: dict[str, object], code: str) -> list[dict[str, object]]:
+    warnings = r["warnings"]
+    assert isinstance(warnings, list)
+    return [w for w in warnings if w["code"] == code]
+
+
+def test_interpreter_records_spindle_starts_and_speed_changes() -> None:
+    prog = interpret_text("S18000 M3\nG1 X1 F100\nS12000\nM5\nS5000\nM4\n")
+    assert prog.spindle_speeds == [(1, 18000.0), (3, 12000.0), (6, 5000.0)]
+
+
+def test_bitrunner_s_too_low_is_an_error() -> None:
+    # 2026-11-16: S10000 left the router off while UGS showed the spindle on (ledger C7)
+    r = analyze_text(
+        "(TOOL: T02 flat 1/4 in   ROUTER DIAL 1.0)\nT2 M6\nS10000 M3\nG1 X5 F500\nM5\nM2\n",
+        profile=BITRUNNER,
+    )
+    [w] = _codes(r, "bitrunner-s-low")
+    assert w["level"] == "error"
+    assert w["lines"] == [3]
+    assert "BitRunner will not switch the router on" in str(w["message"])
+    assert "Router speed: set by the dial" in r["summary"]
+
+
+def test_bitrunner_unverified_s_warns_and_known_good_is_clean() -> None:
+    r = analyze_text("S16000 M3\nG1 X5 F500\nM5\nM2\n", profile=BITRUNNER)
+    [w] = _codes(r, "bitrunner-s-unverified")
+    assert w["level"] == "warn"
+    assert "S16000" in str(w["message"])
+    r = analyze_text("S18000 M3\nG1 X5 F500\nM5\nM2\n", profile=BITRUNNER)
+    assert not _codes(r, "bitrunner-s-low")
+    assert not _codes(r, "bitrunner-s-unverified")
+    assert r["spindle"]["s_values"] == [18000.0]
+
+
+def test_pwm_spindle_has_no_bitrunner_rule() -> None:
+    profile = {**PROFILE, "spindle": {"control": "pwm"}}
+    r = analyze_text("S5000 M3\nG1 X5 F500\nM5\nM2\n", profile=profile)
+    assert not _codes(r, "bitrunner-s-low")
+    assert r["spindle"]["speed"] == "S (PWM/VFD spindle)"

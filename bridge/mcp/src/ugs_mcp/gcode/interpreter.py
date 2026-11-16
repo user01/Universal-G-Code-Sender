@@ -125,6 +125,8 @@ class Program:
     final_distance: str = "G90"
     final_spindle_on: bool = False
     first_tool: int | None = None
+    spindle_speeds: list[tuple[int, float | None]] = field(default_factory=list)
+    """(line, S in effect) at each M3/M4 and at each S change while the spindle is on."""
     tool_by_line: list[int | None] = field(default_factory=list)
     """Tool in the collet at each line (index = line number; index 0 unused)."""
 
@@ -139,6 +141,7 @@ class _State:
     feed: float | None = None
     inverse_time: bool = False
     spindle_on: bool = False
+    speed: float | None = None
     selected_tool: int | None = None
     t_since_m6: bool = False
     tool: int | None = None
@@ -269,8 +272,14 @@ def _step(prog: Program, st: _State, line: Line) -> None:
         if prog.first_tool is None:
             prog.first_tool = st.tool
         st.t_since_m6 = False
+    new_speed = "S" in vals
+    if new_speed:
+        st.speed = vals["S"]
     if "M3" in ms or "M4" in ms:
         st.spindle_on = True
+        prog.spindle_speeds.append((n, st.speed))
+    elif new_speed and st.spindle_on:
+        prog.spindle_speeds.append((n, st.speed))
     if "M5" in ms:
         st.spindle_on = False
     if "G4" in gs:

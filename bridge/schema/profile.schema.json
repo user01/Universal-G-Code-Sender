@@ -144,7 +144,7 @@
             "pwm",
             "manual"
           ],
-          "description": "bitrunner: a relay switches the router on/off, its dial sets the speed (S only has to reach min_on_s); pwm: S sets the speed (VFD/PWM spindle); manual: the operator switches it."
+          "description": "bitrunner: a relay switches the router on/off, its dial sets the speed (S only has to be high enough to trigger it); pwm: S sets the speed (VFD/PWM spindle); manual: the operator switches it."
         },
         "spin_up_s": {
           "type": "number"
@@ -154,10 +154,15 @@
           "minimum": 0,
           "description": "seconds the router coasts after M5; the tool-change prompt waits it out (ledger D2a)"
         },
-        "min_on_s": {
+        "s_on_verified": {
           "type": "number",
           "minimum": 0,
-          "description": "bitrunner: lowest S that switches the router on (ledger C7); analyzers warn below it"
+          "description": "bitrunner: an S value seen to switch the router on (ledger C7)"
+        },
+        "s_off_verified": {
+          "type": "number",
+          "minimum": 0,
+          "description": "bitrunner: an S value seen NOT to switch the router on; S at or below it is an error"
         }
       },
       "required": [],

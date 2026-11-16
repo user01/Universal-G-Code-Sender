@@ -106,11 +106,10 @@ public class MachineProfile {
         public Double spinUpS;
         /** Seconds the router coasts after {@code M5}; the tool-change prompt waits it out (ledger D2a). */
         public Double spinDownS;
-        /**
-         * BitRunner: the lowest {@code S} that switches the router on (ledger C7). The router's speed is its dial;
-         * {@code S} only has to reach this.
-         */
-        public Double minOnS;
+        /** BitRunner: an {@code S} seen to switch the router on (ledger C7); its speed is the router's dial. */
+        public Double sOnVerified;
+        /** BitRunner: an {@code S} seen NOT to switch the router on (ledger C7). */
+        public Double sOffVerified;
         /** Resume dwell: prefer the file's own {@code G4 P..} after {@code M3} over {@code spin_up_s} (D15). */
         public Boolean preferFileDwell;
     }

@@ -271,6 +271,7 @@ def analyze_text(
             spindle_off_cuts,
         )
 
+    spindle = _spindle_checks(prog, job, profile, warn)
     _clearance_checks(prog, job, warn)
     _stock_checks(job, cut_box, cut_tool_box, warn)
     _envelope_checks(prog, profile, all_box, cut_tool_box, wco, warn)
@@ -326,11 +327,77 @@ def analyze_text(
             "plunge": [f for f, _ in plunge_feeds.most_common(4)],
         },
         "time": time,
+        "spindle": spindle,
         "unsupported": unsupported,
         "warnings": warnings,
     }
     result["summary"] = summarize(result)
     return result
+
+
+def _spindle_checks(
+    prog: Program, job: dict[str, Any], profile: dict[str, Any] | None, warn: Any
+) -> dict[str, Any]:
+    """BitRunner (ledger C7): the relay only switches power, the router's dial sets the speed.
+    Too low an S leaves the router off although GRBL (and so UGS) reports the spindle on. The
+    profile knows one S that switched it on and one that didn't; S at or below the "off" value
+    is an error, S between the two is a warning (not verified). Speed comes from the header's
+    ROUTER DIAL, not from S."""
+    sp = (profile or {}).get("spindle") or {}
+    control = sp.get("control")
+    out: dict[str, Any] = {
+        "control": control,
+        "s_values": sorted({s for _, s in prog.spindle_speeds if s is not None}),
+    }
+    dials = {
+        t["id"]: t["router_dial"]
+        for t in job.get("tools", []) or []
+        if isinstance(t, dict) and t.get("router_dial") is not None and "id" in t
+    }
+    if control == "bitrunner":
+        out["speed"] = "router dial (the BitRunner only switches the router on and off)"
+        if dials:
+            out["router_dial"] = dials
+        on = sp.get("s_on_verified")
+        off = sp.get("s_off_verified")
+        on = float(on) if isinstance(on, int | float) and on > 0 else None
+        off = float(off) if isinstance(off, int | float) and off >= 0 else None
+        if on is not None:
+            out["s_on_verified"] = on
+        if off is not None:
+            out["s_off_verified"] = off
+        dead = [n for n, s in prog.spindle_speeds if s is None or (off is not None and s <= off)]
+        unsure = [
+            n
+            for n, s in prog.spindle_speeds
+            if s is not None and (off is None or s > off) and on is not None and s < on
+        ]
+        if dead:
+            warn(
+                "error",
+                "bitrunner-s-low",
+                f"spindle on with no S or S{off:g} or lower on {len(dead)} line(s): the"
+                " BitRunner will not switch the router on, although UGS will show the spindle on."
+                f" Use S{on or 18000:g} or more; the router's dial sets the speed"
+                if off is not None
+                else f"spindle on with no S on {len(dead)} line(s): the BitRunner needs an S"
+                " value to switch the router on",
+                dead,
+            )
+        if unsure:
+            values = sorted({s for n, s in prog.spindle_speeds if n in set(unsure) and s})
+            warn(
+                "warn",
+                "bitrunner-s-unverified",
+                f"S{'/'.join(f'{v:g}' for v in values)} is between S{off or 0:g} (BitRunner"
+                f" stays off) and S{on:g} (switches on): not verified on this machine (ledger"
+                " C7). Watch that the router starts, or use S"
+                f"{on:g}",
+                unsure,
+            )
+    elif control == "pwm":
+        out["speed"] = "S (PWM/VFD spindle)"
+    return out
 
 
 def _rapid_rate(headers: Headers, profile: dict[str, Any] | None) -> float:
@@ -592,6 +659,19 @@ def summarize(r: dict[str, Any]) -> str:
         f"Cut extent incl. cutter: X {_fmt_range(ext, 'x')}  Y {_fmt_range(ext, 'y')}"
         f"  Z {_fmt_range(r['extents']['cut'], 'z')}"
     )
+    sp = r.get("spindle") or {}
+    if sp.get("control") == "bitrunner":
+        dial = sp.get("router_dial") or {}
+        dial_text = (
+            ", ".join(f"{k} dial {v:g}" for k, v in dial.items()) if dial else "not in the header"
+        )
+        s_text = ", ".join(f"S{s:g}" for s in sp.get("s_values") or []) or "none"
+        out.append(
+            f"Router speed: set by the dial ({dial_text}); S only switches the BitRunner"
+            f" ({s_text}"
+            + (f"; S{sp['s_on_verified']:g} is known to work" if sp.get("s_on_verified") else "")
+            + ")."
+        )
     est = f"Estimated time: {t['total_min']:g} min (cut {t['cut_min']:g}, rapid {t['rapid_min']:g}"
     est += f", dwell {t['dwell_s']:g} s; no acceleration, tool changes not counted)"
     if t.get("header_min") is not None:
