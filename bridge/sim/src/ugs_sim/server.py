@@ -30,8 +30,9 @@ log = logging.getLogger("ugs_sim")
 T = TypeVar("T")
 
 CONTROL_HELP = (
-    "commands: state | tool [<length_mm>] | alarm <n> | door [open|close] | probe on|off"
-    " | bitzero on|off | unplug | reset | timescale <x> | shutdown | help"
+    "commands: state | tool [<length_mm>] | tooldia [<mm>] | alarm <n> | door [open|close]"
+    " | probe on|off | bitzero [on|off|place [<x> <y>]|follow|bore <dia> <offset> [<offset_y>]]"
+    " | unplug | reset | timescale <x> | shutdown | help"
 )
 
 
@@ -194,6 +195,12 @@ class SimServer:
                 else:
                     m.open_door()
                 return f"ok door {m.state}"
+            if cmd == "tooldia":
+                if args:
+                    m.set_tool_diameter(float(args[0]))
+                return f"ok tool_diameter_mm={m.tool_diameter_mm:g}"
+            if cmd == "bitzero" and (not args or args[0] in ("place", "follow", "bore")):
+                return self._bitzero(args)
             if cmd in ("probe", "bitzero"):
                 on = _on_off(args)
                 if cmd == "probe":
@@ -218,6 +225,24 @@ class SimServer:
         except (IndexError, ValueError) as exc:
             return f"error: {cmd}: {exc or 'missing argument'}"
         return f"error: unknown command {cmd!r}; {CONTROL_HELP}"
+
+    def _bitzero(self, args: list[str]) -> str:
+        m = self.machine
+        sub = args[0] if args else "info"
+        if sub == "place":
+            if len(args) not in (1, 3):
+                raise ValueError("expected: bitzero place [<x> <y>]")
+            corner = (float(args[1]), float(args[2])) if len(args) == 3 else None
+            m.place_bitzero(corner)
+        elif sub == "follow":
+            m.follow_bitzero()
+        elif sub == "bore":
+            if len(args) not in (3, 4):
+                raise ValueError("expected: bitzero bore <dia> <offset> [<offset_y>]")
+            off_x = float(args[2])
+            off_y = float(args[3]) if len(args) == 4 else off_x
+            m.set_bitzero_bore(float(args[1]), (off_x, off_y))
+        return "ok bitzero " + json.dumps(m.bitzero_info())
 
 
 def _on_off(args: list[str]) -> bool:
@@ -324,6 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--setting", type=_parse_setting, action="append", default=[], metavar="N=VALUE")
     p.add_argument("--time-scale", type=float, default=1.0, help="simulated seconds per second")
     p.add_argument("--tool", type=float, default=WorldDefaults.tool_length_mm, metavar="MM")
+    p.add_argument("--tool-dia", type=float, default=WorldDefaults.tool_diameter_mm, metavar="MM")
     p.add_argument("--bitsetter-top-z", type=float, default=WorldDefaults.bitsetter_top_z)
     p.add_argument("--stock-top-z", type=float, default=WorldDefaults.stock_top_z)
     p.add_argument("--m6", choices=("error", "ignore"), default="error")
@@ -348,13 +374,15 @@ def build_machine(args: argparse.Namespace) -> ShapeokoGrbl:
         bitsetter_top_z=args.bitsetter_top_z,
         stock_top_z=args.stock_top_z,
     )
-    return ShapeokoGrbl(
+    machine = ShapeokoGrbl(
         profile,
         settings=settings,
         world=world_for(profile, defaults),
         time_scale=args.time_scale,
         m6=args.m6,
     )
+    machine.set_tool_diameter(args.tool_dia)
+    return machine
 
 
 async def _serve(args: argparse.Namespace) -> None:

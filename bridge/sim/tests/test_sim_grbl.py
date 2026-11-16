@@ -158,8 +158,8 @@ def test_bitzero_on_stock(homed: GrblClient, sim: ThreadedSimServer) -> None:
     m = PRB.match(out[0])
     assert m
     assert m.group(4) == "1"
-    # stock top -95.6 + plate 12.7 (placeholder) + tool 40
-    assert float(m.group(3)) == pytest.approx(-95.6 + 12.7 + 40.0, abs=1e-3)
+    # stock top -95.6 + plate 13.0 (profile, ledger B1) + tool 40
+    assert float(m.group(3)) == pytest.approx(-95.6 + 13.0 + 40.0, abs=1e-3)
     sim.control("bitzero off")
     homed.command("G0 Z5")
     assert homed.command("G91 G38.3 Z-20 F200")[0].endswith(":0]")
@@ -210,9 +210,8 @@ def test_feed_hold_and_resume(homed: GrblClient, sim: ThreadedSimServer) -> None
     assert homed.command("G53 G1 X-100 F3000") == ["ok"]  # 2 s
     homed.wait_state("Run")
     homed.send(b"!")
-    assert homed.status().startswith("<Hold:1|")
-    held = homed.status()
-    assert held.startswith("<Hold:0|")
+    assert homed.status().startswith("<Hold:1|")  # decelerating (about 0.125 s here)
+    held = homed.wait_state("Hold:0")
     time.sleep(0.1)
     assert homed.status().split("|")[1] == held.split("|")[1]  # not moving
     homed.send(b"~")
