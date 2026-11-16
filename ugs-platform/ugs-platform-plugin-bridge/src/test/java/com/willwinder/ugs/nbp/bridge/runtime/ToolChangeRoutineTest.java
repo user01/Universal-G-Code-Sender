@@ -19,6 +19,7 @@
 package com.willwinder.ugs.nbp.bridge.runtime;
 
 import com.willwinder.ugs.nbp.bridge.job.JobModel;
+import com.willwinder.ugs.nbp.bridge.job.MachineProfile;
 import com.willwinder.universalgcodesender.services.interceptor.InterceptAbortedException;
 import com.willwinder.universalgcodesender.services.interceptor.InterceptorPrompt;
 import com.willwinder.universalgcodesender.services.interceptor.UserResponse;
@@ -60,6 +61,49 @@ public class ToolChangeRoutineTest {
             }
         }
         throw new AssertionError(text);
+    }
+
+    @Test
+    public void thePromptWaitsOutTheRoutersSpinDown() throws Exception {
+        // 2026-11-16: the prompt came 1.2 s after M5 while the router still coasted
+        MachineProfile p = Fixtures.profile();
+        p.spindle.spinDownS = 8.0;
+        long[] now = {0};
+        // parking takes 3 s of the 8 s spin-down: the routine dwells the other 5 s before the prompt
+        FakeMachine fm = m;
+        ToolChangeRoutine r = new ToolChangeRoutine(p, fm, q -> {
+            prompts.add(q);
+            sentAtPrompt.add(List.copyOf(fm.log));
+            return UserResponse.CONTINUE;
+        }, events, () -> {
+            long t = now[0];
+            now[0] += 3_000_000_000L;
+            return t;
+        });
+        m.triggerZ = -68.5;
+        r.toolChange("T21 M6", line("T21 M6"), job, 10.0);
+        assertEquals(List.of("T21", "M5", "G21 G90", "G53 G0 Z-5.000", "G53 G0 X-222.000 Y-440.000", "G4 P0", "G4 P5.0"),
+                sentAtPrompt.get(0));
+        assertTrue(prompts.get(0).message().contains("Wait for the bit to stop before touching it."));
+    }
+
+    @Test
+    public void noSpinDownDwellWhenParkingTookLongEnough() throws Exception {
+        MachineProfile p = Fixtures.profile();
+        p.spindle.spinDownS = 2.0;
+        long[] now = {0};
+        FakeMachine fm = m;
+        ToolChangeRoutine r = new ToolChangeRoutine(p, fm, q -> {
+            sentAtPrompt.add(List.copyOf(fm.log));
+            return UserResponse.CONTINUE;
+        }, events, () -> {
+            long t = now[0];
+            now[0] += 3_000_000_000L;
+            return t;
+        });
+        m.triggerZ = -68.5;
+        r.toolChange("T21 M6", line("T21 M6"), job, 10.0);
+        assertEquals("G4 P0", sentAtPrompt.get(0).get(sentAtPrompt.get(0).size() - 1));
     }
 
     @Test

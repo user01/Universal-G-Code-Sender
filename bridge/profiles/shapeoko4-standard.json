@@ -58,6 +58,10 @@
   "spindle": {
     "control": "bitrunner",
     "spin_up_s": 2.0,
+    "spin_down_s": 8.0,
+    "spin_down_source": "assumed: the router was still coasting 1.2 s after M5 on 2026-11-16; not timed (ledger D2a)",
+    "min_on_s": 18000,
+    "min_on_source": "measured 2026-11-16: M3 S10000 does not switch the BitRunner on, M3 S18000 does ($30=24000; ledger C7)",
     "prefer_file_dwell": true,
     "_note": "resume preamble dwells for the file's own G4 after M3 when present, else spin_up_s (D15, ledger C5)"
   },

@@ -128,12 +128,20 @@ public final class ToolChangeRoutine {
     private final Prompter prompter;
     private final Events events;
     private final List<String> sent = new ArrayList<>();
+    private final java.util.function.LongSupplier nanos;
 
     public ToolChangeRoutine(MachineProfile profile, MachineIo io, Prompter prompter, Events events) {
+        this(profile, io, prompter, events, System::nanoTime);
+    }
+
+    /** @param nanos monotonic clock (tests pass a fake one) for the spin-down wait */
+    public ToolChangeRoutine(MachineProfile profile, MachineIo io, Prompter prompter, Events events,
+                             java.util.function.LongSupplier nanos) {
         this.profile = profile;
         this.io = io;
         this.prompter = prompter;
         this.events = events;
+        this.nanos = nanos;
     }
 
     /** Lines sent so far (for logs and the report). */
@@ -199,6 +207,7 @@ public final class ToolChangeRoutine {
                 send("T" + number);
             }
             send("M5");
+            long spindleOffAt = nanos.getAsLong();
             send("G21 G90");
             send("G53 G0 Z" + f3(safe));
             double[] park = profile.toolChangePark;
@@ -209,6 +218,12 @@ public final class ToolChangeRoutine {
                 }
             }
             send("G4 P0");
+            // The router coasts for seconds after M5 (seen 2026-11-16: the prompt came 1.2 s after M5 while the bit
+            // still turned). Dwell out the rest of the profile's spin-down before asking for hands on the bit.
+            double left = profile.spinDownSeconds() - (nanos.getAsLong() - spindleOffAt) / 1e9;
+            if (left >= 0.1) {
+                send(String.format(Locale.ROOT, "G4 P%.1f", left));
+            }
         } catch (MachineIo.MachineException e) {
             throw new RoutineException("tool change: could not park: " + e.getMessage(), e);
         }
@@ -234,7 +249,8 @@ public final class ToolChangeRoutine {
 
         prompter.ask(new InterceptorPrompt(STEP_CHANGE, List.of(UserResponse.CONTINUE, UserResponse.ABORT),
                 "Change to " + label,
-                "Change to " + label + ".\n\nThe spindle is off and parked. Install the bit, take the BitZero clip off, "
+                "Change to " + label + ".\n\nThe spindle is off and parked. Wait for the bit to stop before touching "
+                        + "it. Install the bit, take the BitZero clip off, "
                         + "then press Continue: the bridge measures the new tool on the BitSetter, sets Z and returns "
                         + "to the work at safe height."));
         events.tool(toolData("confirmed", tool));
