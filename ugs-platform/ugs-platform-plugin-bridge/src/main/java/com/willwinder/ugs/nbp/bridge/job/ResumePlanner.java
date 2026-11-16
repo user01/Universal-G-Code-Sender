@@ -264,7 +264,10 @@ public final class ResumePlanner {
         }
         if (md.spindleOn()) {
             pre.add((md.speed() > 0 ? "S" + feed(md.speed()) + " " : "") + md.spindle());
-            double spin = profile.spinUpSeconds();
+            // D15: the file's own dwell after its M3 (the operator's post emits G4 P2.0), else the profile's.
+            Double fileDwell = profile.preferFileDwell() ? fileSpinUpDwell(job, line) : null;
+            double spin = fileDwell != null ? fileDwell : profile.spinUpSeconds();
+            p.spinUpSource = fileDwell != null ? "file" : "profile";
             if (spin > 0) {
                 pre.add("G4 P" + feed(spin));
             }
@@ -288,7 +291,10 @@ public final class ResumePlanner {
         }
 
         // ---- 6. envelope
-        p.checks.add(envelopeCheck(job, profile, line, wco, p.warnings));
+        // J-1: when the tool is (re)measured before the cut, Z of the current WCO is not the Z the program will run
+        // with; only XY is checked here and the tool-change routine checks Z with the post-measurement WCO.
+        boolean zAfterMeasure = needMeasure || m6InStream != null;
+        p.checks.add(envelopeCheck(job, profile, line, wco, p.warnings, !zAfterMeasure));
 
         p.ready = p.requires.isEmpty() && p.checks.stream().allMatch(c -> c.ok);
         p.planId = "rp-" + Json.sha256Hex((p.fileSha256 + "|" + p.resumeLine + "|" + String.join("\n", pre) + "|"
@@ -335,8 +341,18 @@ public final class ResumePlanner {
         return line;
     }
 
-    static ResumePlan.Check envelopeCheck(JobModel job, MachineProfile profile, int line, double[] wco,
-                                          List<String> warnings) {
+    /** All three axes: the remaining program from {@code line} with this WCO (mm) inside the profile's envelope. */
+    public static ResumePlan.Check envelopeCheck(JobModel job, MachineProfile profile, int line, double[] wco,
+                                                 List<String> warnings) {
+        return envelopeCheck(job, profile, line, wco, warnings, true);
+    }
+
+    /**
+     * @param checkZ false when the tool is measured before the cut: the current WCO's Z doesn't apply yet, so only
+     *               X and Y are checked (the tool-change routine checks Z with the post-measurement WCO)
+     */
+    public static ResumePlan.Check envelopeCheck(JobModel job, MachineProfile profile, int line, double[] wco,
+                                                 List<String> warnings, boolean checkZ) {
         MachineProfile.Envelope env = profile.envelopeMm;
         if (env == null || env.min == null || env.max == null) {
             return new ResumePlan.Check("envelope", false, "profile has no envelope");
@@ -365,7 +381,7 @@ public final class ResumePlanner {
         }
         List<String> bad = new ArrayList<>();
         String[] ax = {"X", "Y", "Z"};
-        for (int a = 0; a < 3; a++) {
+        for (int a = 0; a < (checkZ ? 3 : 2); a++) {
             if (lo[a] == Double.POSITIVE_INFINITY) {
                 continue;
             }
@@ -382,9 +398,52 @@ public final class ResumePlanner {
         if (!bad.isEmpty()) {
             return new ResumePlan.Check("envelope", false, String.join("; ", bad));
         }
+        if (!checkZ) {
+            return new ResumePlan.Check("envelope", true, String.format(Locale.ROOT,
+                    "remaining program inside the envelope in XY (machine X %.1f..%.1f Y %.1f..%.1f); Z is checked "
+                            + "after the tool is measured", lo[0] + wco[0], hi[0] + wco[0], lo[1] + wco[1], hi[1] + wco[1]));
+        }
         return new ResumePlan.Check("envelope", true, String.format(Locale.ROOT,
                 "preamble and remaining program inside the envelope (machine X %.1f..%.1f Y %.1f..%.1f Z %.1f..%.1f)",
                 lo[0] + wco[0], hi[0] + wco[0], lo[1] + wco[1], hi[1] + wco[1], lo[2] + wco[2], hi[2] + wco[2]));
+    }
+
+    private static final java.util.regex.Pattern SPINDLE_ON = java.util.regex.Pattern.compile("(?i)(?<![A-Z])M0?[34](?![0-9])");
+    private static final java.util.regex.Pattern DWELL = java.util.regex.Pattern.compile(
+            "(?i)(?<![A-Z])G0?4(?![0-9.]).*?(?<![A-Z])P\\s*([0-9]*\\.?[0-9]+)");
+
+    /**
+     * D15: the program's own spin-up dwell, i.e. the {@code G4 P<s>} on or within three code lines after the last
+     * {@code M3}/{@code M4} before {@code line} (no motion in between). Null when there is none.
+     */
+    public static Double fileSpinUpDwell(JobModel job, int line) {
+        for (int i = Math.min(line - 1, job.lineCount()); i >= 1; i--) {
+            String code = stripComments(job.line(i));
+            if (!SPINDLE_ON.matcher(code).find()) {
+                continue;
+            }
+            int codeLines = 0;
+            for (int k = i; k <= job.lineCount() && codeLines <= 3; k++) {
+                String c = stripComments(job.line(k));
+                if (c.isBlank()) {
+                    continue;
+                }
+                java.util.regex.Matcher m = DWELL.matcher(c);
+                if (m.find()) {
+                    return Double.parseDouble(m.group(1));
+                }
+                if (k > i && job.motion(k) != JobModel.Motion.NONE) {
+                    return null;
+                }
+                codeLines++;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    private static String stripComments(String s) {
+        return s.replaceAll("\\([^)]*\\)", " ").replaceAll(";.*$", "");
     }
 
     /** XY (and Z if {@code compareZ}) of two WCOs within {@code tol} mm. */

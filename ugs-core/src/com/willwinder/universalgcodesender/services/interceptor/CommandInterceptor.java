@@ -46,4 +46,16 @@ public interface CommandInterceptor {
      * @throws InterceptException if the routine could not be completed
      */
     void execute(InterceptContext context) throws InterceptException;
+
+    /**
+     * Whether the service moves the machine back to the work position captured before the interception (XY, then
+     * Z) when the routine has finished. Modal state, spindle, coolant and feed are restored either way. An
+     * interceptor that changes the work offset (for example a tool length measurement) or leaves the machine at
+     * a safe position itself should return false: the captured work Z may no longer be a safe height.
+     *
+     * @return true to restore the captured position (the default)
+     */
+    default boolean restoresPosition() {
+        return true;
+    }
 }

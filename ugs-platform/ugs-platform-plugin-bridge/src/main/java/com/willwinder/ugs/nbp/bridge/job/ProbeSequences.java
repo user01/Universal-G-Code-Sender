@@ -120,6 +120,117 @@ public final class ProbeSequences {
         return new ProbeSequence(List.copyOf(c), fast, slow, z.pin == null ? "P" : z.pin, warnings);
     }
 
+    /**
+     * One axis of a bore-center probe: from inside the bore, probe the minus wall (fast, retract, slow, retract),
+     * then the plus wall the same way, then {@code G90}. The slow probes' PRB values on this axis are the two wall
+     * contacts (machine coordinates).
+     *
+     * @param axis           {@code X} or {@code Y}
+     * @param slowMinusIndex index of the slow probe toward the minus wall
+     * @param slowPlusIndex  index of the slow probe toward the plus wall
+     */
+    public record BoreAxis(String axis, List<String> commands, int slowMinusIndex, int slowPlusIndex) {
+    }
+
+    /**
+     * BitZero XY corner by the bore-center method (J-1). Either {@link #refusal} is set (nothing may be sent), or
+     * the X and Y phases are. Run: check the probe pin is clear; send {@link #x}; move to the X center
+     * ({@link #centerMove}); send {@link #y}; move to the Y center; check {@link #boreCheck} on both axes; set the
+     * origin with {@link #setOrigin}. Z is set separately with {@link #bitzeroZ} with the bit over the plate top
+     * (together: method {@code bitzero_xyz}).
+     *
+     * @param boreDiameter       profile {@code bitzero.bore_diameter}
+     * @param boreCenterToCorner profile {@code bitzero.bore_center_to_corner} {@code [dx, dy]}
+     * @param toolDiameter       diameter of the bit in the bore (mm)
+     */
+    public record CornerSequence(String refusal, BoreAxis x, BoreAxis y, double boreDiameter,
+                                 double[] boreCenterToCorner, double toolDiameter, String probePin,
+                                 List<String> warnings) {
+        public boolean refused() {
+            return refusal != null;
+        }
+
+        /** {@code G53 G0 <axis><center>}, center = mid-point of the two wall contacts (machine mm). */
+        public static String centerMove(String axis, double minusContact, double plusContact) {
+            return "G53 G0 " + axis + f3((minusContact + plusContact) / 2.0);
+        }
+
+        /**
+         * Null when the bore measured from the two contacts ({@code plus − minus + tool}) is within
+         * {@code tolerance} of the profile's bore diameter, else a message (wrong tool diameter, bit not in the
+         * bore, chips).
+         */
+        public String boreCheck(String axis, double minusContact, double plusContact, double tolerance) {
+            double measured = plusContact - minusContact + toolDiameter;
+            if (Math.abs(measured - boreDiameter) <= tolerance) {
+                return null;
+            }
+            return String.format(Locale.ROOT, "%s: measured bore %.3f mm, profile says %.3f mm (tool %.3f mm)", axis,
+                    measured, boreDiameter, toolDiameter);
+        }
+
+        /** {@code G10 L2 P<n> X.. Y..}: the work XY origin at bore center + {@code bore_center_to_corner}. */
+        public String setOrigin(String wcs, double centerX, double centerY) {
+            return String.format(Locale.ROOT, "G10 L2 P%d X%.3f Y%.3f", BitSetter.wcsIndex(wcs),
+                    centerX + boreCenterToCorner[0], centerY + boreCenterToCorner[1]);
+        }
+    }
+
+    /**
+     * BitZero XY corner (bore-center method). Refuses (no commands) until the profile has {@code bore_diameter} and
+     * {@code bore_center_to_corner} (machine ledger B3), when the tool doesn't fit the bore, or when the feeds are
+     * missing.
+     */
+    public static CornerSequence bitzeroCorner(MachineProfile profile, double toolDiameter) {
+        MachineProfile.BitZeroConfig z = profile.bitzero;
+        String pin = z == null || z.pin == null ? "P" : z.pin;
+        if (z == null || z.fastFeed == null || z.slowFeed == null || z.retract == null) {
+            return refuse("profile.bitzero needs fast_feed, slow_feed and retract", toolDiameter, pin);
+        }
+        if (z.boreDiameter == null || z.boreCenterToCorner == null || z.boreCenterToCorner.length != 2) {
+            return refuse("BitZero XY corner probing needs bitzero.bore_diameter and bitzero.bore_center_to_corner "
+                    + "[dx, dy] in the profile (machine ledger B3: not measured yet). Use Z-only probing.", toolDiameter, pin);
+        }
+        if (!(toolDiameter > 0) || toolDiameter >= z.boreDiameter - 0.5) {
+            return refuse(String.format(Locale.ROOT, "tool diameter %.3f mm doesn't fit the %.3f mm bore",
+                    toolDiameter, z.boreDiameter), toolDiameter, pin);
+        }
+        double r = z.retract;
+        // From anywhere in the bore the far wall is at most bore - tool away; 1 mm extra, then GRBL alarms (bounded).
+        double span = z.boreDiameter - toolDiameter + 1.0;
+        if (r >= span) {
+            return refuse("bitzero.retract is larger than the free space in the bore", toolDiameter, pin);
+        }
+        List<String> warnings = new ArrayList<>();
+        warnings.add("BitZero bore geometry comes from the profile; check it against ledger B3");
+        return new CornerSequence(null, boreAxis("X", span, r, z), boreAxis("Y", span, r, z), z.boreDiameter,
+                z.boreCenterToCorner.clone(), toolDiameter, pin, warnings);
+    }
+
+    private static BoreAxis boreAxis(String axis, double span, double r, MachineProfile.BitZeroConfig z) {
+        double slowTravel = r + 1.0;
+        String fast = " F" + ResumePlanner.feed(z.fastFeed);
+        String slow = " F" + ResumePlanner.feed(z.slowFeed);
+        List<String> c = new ArrayList<>();
+        c.add("G21 G91");
+        c.add("G38.2 " + axis + "-" + f3(span) + fast);
+        c.add("G0 " + axis + f3(r));
+        int minus = c.size();
+        c.add("G38.2 " + axis + "-" + f3(slowTravel) + slow);
+        c.add("G0 " + axis + f3(r));
+        c.add("G38.2 " + axis + f3(span) + fast);
+        c.add("G0 " + axis + "-" + f3(r));
+        int plus = c.size();
+        c.add("G38.2 " + axis + f3(slowTravel) + slow);
+        c.add("G0 " + axis + "-" + f3(r));
+        c.add("G90");
+        return new BoreAxis(axis, List.copyOf(c), minus, plus);
+    }
+
+    private static CornerSequence refuse(String why, double toolDiameter, String pin) {
+        return new CornerSequence(why, null, null, Double.NaN, null, toolDiameter, pin, List.of());
+    }
+
     private static String f3(double v) {
         return String.format(Locale.ROOT, "%.3f", v);
     }

@@ -23,13 +23,21 @@ import java.util.List;
 /**
  * Describes a request for operator input from an interceptor. The step id lets a user interface render a
  * screen tailored to the current step, and the options describe which responses the operator may give.
+ * An interceptor may also give a title and a message (both optional, null when absent) for user interfaces
+ * that don't know its step ids.
  *
  * @author Joacim Breiler
  */
-public record InterceptorPrompt(String stepId, List<UserResponse> options) {
-    public InterceptorPrompt(String stepId, List<UserResponse> options) {
+public record InterceptorPrompt(String stepId, List<UserResponse> options, String title, String message) {
+    public InterceptorPrompt(String stepId, List<UserResponse> options, String title, String message) {
         this.stepId = stepId;
         this.options = List.copyOf(options);
+        this.title = title;
+        this.message = message;
+    }
+
+    public InterceptorPrompt(String stepId, List<UserResponse> options) {
+        this(stepId, options, null, null);
     }
 
     public boolean hasOption(UserResponse option) {

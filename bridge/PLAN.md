@@ -55,6 +55,10 @@ Status 2026-11-15. Companion to `SPEC.md` (v0.1). Decisions here override the SP
 | P4 | `GrblController` | `openCommPort` sets `CONNECTING` before `comm.connect` (as `AbstractController` does) | the bridge attaches on that event, before the first welcome line |
 | P5 | `services/MdnsService` | jmdns only if `-Dugs.mdns.enabled=true` (`MdnsService.isEnabled()`) | `TCPConnection` started mDNS on every IPv4 interface; the bridge must not advertise on the LAN. Cost: no `_telnet._tcp` device list for the TCP driver unless enabled |
 | P6 | `communicator/BufferedCommunicator` | `streamCommands` dispatches `commandSent` before `sendStringToComm` | a fast answer could be dispatched before its command's `commandSent` (UGS's own controller has the same race); with it, `rx` attribution is exact without guessing |
+| P7 | `services/interceptor/InterceptorPrompt` | optional `title` and `message` (2-arg constructor kept) | the BitSetter prompt says "Change to T21 Whiteside RU1600 1/8 in upcut" in UGS's dialog |
+| P7 | `services/interceptor/CommandInterceptor`, `CommandInterceptorService` | `default boolean restoresPosition()`; the service skips its `G0 X Y` / `G0 Z` restore when false | the stock restore rapids to the work Z captured before `M6`; the posts retract with `G53 G0 Z-5`, which UGS's parser records as **work** Z-5, i.e. 5 mm below the stock top after the change. The BitSetter interceptor returns to the pre-change XY at safe Z itself (D10) |
+| P7 | `services/interceptor/CommandInterceptorService` | state goes `INACTIVE` before the stream is un-gated and restarted | the communicator refills the RX buffer at once and `findInterceptor` only matches while inactive, so an `M6` within ~128 bytes of the previous one went to GRBL raw (`error:20`); seen on the simulator |
+| P7 | `ugs-platform-plugin-interceptor/GenericDialog` | shows the prompt's title/message when present | |
 | — | anything else | must be justified here | |
 
 ## Notifications (new SPEC §4.6, draft)

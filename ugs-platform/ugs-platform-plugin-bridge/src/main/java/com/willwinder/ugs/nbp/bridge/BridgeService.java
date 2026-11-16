@@ -106,6 +106,7 @@ public final class BridgeService implements Runnable {
             startApi(backend);
             DevConnect.maybeConnect(backend);
             DevConnect.maybeUnlock(backend, authority);
+            DevJob.maybeRun(backend);
             DevSnapshot.maybeStart();
         } catch (RuntimeException e) {
             LOGGER.log(Level.SEVERE, "ugs-bridge failed to start", e);
@@ -131,6 +132,7 @@ public final class BridgeService implements Runnable {
         if (backend != null) {
             c.attach(backend);
             c.startHeartbeat();
+            com.willwinder.ugs.nbp.bridge.runtime.JobRuntime.start(backend, log);
         }
         LOGGER.info(() -> "ugs-bridge started (MCP " + LOCK.getState() + ", backend " + (backend != null ? "found" : "missing")
                 + ", log " + log.logsRoot() + ")");
@@ -147,6 +149,7 @@ public final class BridgeService implements Runnable {
             authority.dispose();
             authority = null;
         }
+        com.willwinder.ugs.nbp.bridge.runtime.JobRuntime.stopCurrent();
         if (notifier != null) {
             notifier.close();
             notifier = null;
