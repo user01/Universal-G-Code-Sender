@@ -21,8 +21,8 @@ package com.willwinder.universalgcodesender.communicator.event;
 import com.willwinder.universalgcodesender.communicator.ICommunicatorListener;
 import com.willwinder.universalgcodesender.types.GcodeCommand;
 
-import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 /**
  * A synchronous communicator event dispatcher that will dispatch events
@@ -38,7 +38,8 @@ import java.util.Set;
  * @author Joacim Breiler
  */
 public class CommunicatorEventDispatcher implements ICommunicatorEventDispatcher {
-    protected final Set<ICommunicatorListener> communicatorListeners = new HashSet<>();
+    // ugs-bridge patch P4: listeners are added/removed from other threads while events are dispatched
+    protected final Set<ICommunicatorListener> communicatorListeners = new CopyOnWriteArraySet<>();
 
     @Override
     public void removeListener(ICommunicatorListener listener) {
@@ -63,6 +64,11 @@ public class CommunicatorEventDispatcher implements ICommunicatorEventDispatcher
     @Override
     public void commandSent(GcodeCommand command) {
         communicatorListeners.forEach(l -> l.commandSent(command));
+    }
+
+    @Override
+    public void realtimeByteSent(byte b) {
+        communicatorListeners.forEach(l -> l.realtimeByteSent(b));
     }
 
     @Override

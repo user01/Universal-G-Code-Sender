@@ -61,6 +61,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -84,13 +85,24 @@ import java.util.logging.Logger;
  * controller is initializing are {@code ugs}; other generated commands are {@code operator}. {@code rx}
  * lines take the source of the command they answer, or {@code controller} if no command is waiting.
  * <p>
- * {@code ?} polls and other real-time bytes are written with {@code ICommunicator.sendByteImmediately},
- * which has no listener in UGS, so they are not seen here; callers that send real-time bytes themselves
- * report them with {@link #recordRealtime}.
+ * Real-time bytes written with {@code ICommunicator.sendByteImmediately} arrive through
+ * {@link #realtimeByteSent} (upstream patch P3) and become {@code tx} records with {@code realtime};
+ * {@code ?} polls are only counted (they are implied by {@code status}). A {@code ?} that UGS sends as a
+ * whole line ({@code GetStatusCommand} at connect) is a line on the wire: the controller answers it with a
+ * report and {@code ok}, so it gets a {@code tx} record and its {@code ok} is attributed to it (no
+ * {@code command} records: UGS completes it on the report and calls it not ok).
+ * <p>
+ * {@code rx} attribution relies on upstream patch P6: {@code commandSent} is dispatched before the line is
+ * written, so it always precedes the answer in the communicator's event order. An answer with nothing
+ * waiting is therefore unsolicited (or answers a command sent before the bridge attached). Events UGS
+ * discards when it resets the communicator still reach the capture (patch P4,
+ * {@link #receivesDiscardedEvents}).
  */
 public final class Capture implements UGSEventListener, MessageListener, ICommunicatorListener {
     private static final Logger LOGGER = Logger.getLogger(Capture.class.getName());
     private static final int MAX_IN_FLIGHT = 1000;
+    private static final long REALTIME_ATTRIBUTION_NANOS = 2_000_000_000L;
+    private static final Pattern CONSOLE_ECHO = Pattern.compile("^(\\[\\w+] )?>>>( |$)");
 
     private final SessionLog log;
     private final CommandOrigins origins;
@@ -107,7 +119,8 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
     private ControllerState controllerState = ControllerState.DISCONNECTED;
     private boolean sawRawStatus;
     private final Deque<InFlight> inFlight = new ArrayDeque<>();
-    private int orphanAcks;
+    private final Deque<ExpectedRealtime> expectedRealtime = new ArrayDeque<>();
+    private long statusPolls;
     private InterceptorState interceptorState = InterceptorState.INACTIVE;
     private FileFingerprint streamFile;
     private String nextStreamSrc;
@@ -184,18 +197,19 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
     }
 
     /**
-     * Hook for callers that write real-time bytes themselves (feed hold, resume, jog cancel, reset, overrides):
-     * logs a {@code tx} record with {@code realtime: "0x.."}. {@code ?} polls must not be reported.
+     * Hook for callers that are about to write a real-time byte themselves (the API's hold, resume, jog
+     * cancel, reset): the next time {@code b} is seen on the wire (within 2 s) its {@code tx} record gets
+     * {@code src} and {@code cmdId} instead of the default ({@code operator}).
      */
-    public void recordRealtime(byte b, String src, String cmdId) {
-        JsonObject d = new JsonObject();
-        int v = b & 0xff;
-        d.addProperty("line", v >= 0x21 && v < 0x7f ? String.valueOf((char) v) : String.format("0x%02x", v));
-        if (cmdId != null) {
-            d.addProperty("cmd_id", cmdId);
-        }
-        d.addProperty("realtime", String.format("0x%02x", v));
-        log.append(Kind.TX, src, d);
+    public synchronized void attributeRealtime(byte b, String src, String cmdId) {
+        long now = nanoTime.getAsLong();
+        expectedRealtime.removeIf(e -> e.deadline - now < 0);
+        expectedRealtime.addLast(new ExpectedRealtime(b, src, cmdId, now + REALTIME_ATTRIBUTION_NANOS));
+    }
+
+    /** Number of real-time {@code ?} polls seen since the bridge attached (they are not logged as tx). */
+    public synchronized long statusPolls() {
+        return statusPolls;
     }
 
     // ---------------------------------------------------------------- session
@@ -234,7 +248,7 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
         statusFilter.reset();
         sawRawStatus = false;
         inFlight.clear();
-        orphanAcks = 0;
+        expectedRealtime.clear();
         attachCommunicator();
     }
 
@@ -336,7 +350,6 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
         String src = Src.CONTROLLER;
         if (RecordMapper.isWelcome(line)) {
             inFlight.clear(); // controller reset: nothing is waiting any more
-            orphanAcks = 0;
         } else if (!inFlight.isEmpty()) {
             InFlight head = inFlight.peekFirst();
             d.addProperty("cmd_id", head.cmdId);
@@ -344,9 +357,6 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
             if (RecordMapper.isAck(line)) {
                 inFlight.removeFirst();
             }
-        } else if (RecordMapper.isAck(line) && !line.toUpperCase(Locale.ROOT).startsWith("ALARM")) {
-            // The ack overtook its commandSent event (both are queued by different UGS threads).
-            orphanAcks++;
         }
         log.append(Kind.RX, src, d);
 
@@ -363,9 +373,6 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
     @Override
     public synchronized void commandSent(GcodeCommand command) {
         String line = command.getCommandString();
-        if ("?".equals(line)) {
-            return; // status polls are implied by status records
-        }
         Attribution a = attribute(command);
         JsonObject d = new JsonObject();
         d.addProperty("line", line);
@@ -375,17 +382,49 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
         }
         log.append(Kind.TX, a.src, d);
 
-        if (orphanAcks > 0 && command.isDone()) {
-            orphanAcks--; // its ack was already logged without a cmd_id
-        } else {
-            inFlight.addLast(new InFlight(a.cmdId, a.src));
-            while (inFlight.size() > MAX_IN_FLIGHT) {
-                inFlight.removeFirst();
-            }
+        inFlight.addLast(new InFlight(a.cmdId, a.src));
+        while (inFlight.size() > MAX_IN_FLIGHT) {
+            inFlight.removeFirst();
         }
-        if (command.isGenerated()) {
+        if (command.isGenerated() && !isStatusQuery(command)) {
             log.append(Kind.COMMAND, a.src, commandData(command, a, "sent"));
         }
+    }
+
+    /** Upstream patch P4: lines still queued when UGS resets the communicator are logged too. */
+    @Override
+    public boolean receivesDiscardedEvents() {
+        return true;
+    }
+
+    @Override
+    public synchronized void realtimeByteSent(byte b) {
+        if (b == '?') {
+            statusPolls++; // implied by the status records
+            return;
+        }
+        int v = b & 0xff;
+        String src = interceptorState != InterceptorState.INACTIVE ? Src.UGS : Src.OPERATOR;
+        String cmdId = null;
+        long now = nanoTime.getAsLong();
+        for (var it = expectedRealtime.iterator(); it.hasNext(); ) {
+            ExpectedRealtime e = it.next();
+            if (e.deadline - now < 0) {
+                it.remove();
+            } else if (e.b == b) {
+                it.remove();
+                src = e.src;
+                cmdId = e.cmdId;
+                break;
+            }
+        }
+        JsonObject d = new JsonObject();
+        d.addProperty("line", v >= 0x21 && v < 0x7f ? String.valueOf((char) v) : String.format("0x%02x", v));
+        if (cmdId != null) {
+            d.addProperty("cmd_id", cmdId);
+        }
+        d.addProperty("realtime", String.format("0x%02x", v));
+        log.append(Kind.TX, src, d);
     }
 
     @Override
@@ -427,8 +466,11 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
             return;
         }
         String text = message.stripTrailing();
-        if (messageType == MessageType.VERBOSE && GrblStatusParser.isStatusReport(text.strip())) {
-            return; // UGS echoes every status report as VERBOSE; it is already in the status records
+        if (GrblStatusParser.isStatusReport(text.strip())) {
+            return; // UGS echoes status reports (VERBOSE, or INFO as a query's response); they are in status
+        }
+        if (isConsoleEcho(text)) {
+            return; // D16: ">>> cmd" and the echoed "ok" duplicate the tx/rx records
         }
         JsonObject d = new JsonObject();
         d.addProperty("type", messageType == null ? "INFO" : messageType.name());
@@ -512,8 +554,8 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
 
     private void onCommandEvent(CommandEvent e) {
         GcodeCommand cmd = e.getCommand();
-        if (cmd == null || "?".equals(cmd.getCommandString())) {
-            return;
+        if (cmd == null || isStatusQuery(cmd)) {
+            return; // whole-line '?' queries are fully described by tx/rx (UGS reports them as not ok)
         }
         Attribution a = attribute(cmd);
         switch (e.getCommandEventType()) {
@@ -721,6 +763,19 @@ public final class Capture implements UGSEventListener, MessageListener, ICommun
     private record Attribution(String cmdId, String src, String tag) {
     }
 
+    private static boolean isStatusQuery(GcodeCommand cmd) {
+        return "?".equals(cmd.getCommandString());
+    }
+
+    /** UGS's console echo of a sent command ({@code >>> G0 X1}, optionally origin-tagged) or of its {@code ok}. */
+    static boolean isConsoleEcho(String text) {
+        String t = text.strip();
+        return CONSOLE_ECHO.matcher(t).find() || t.equalsIgnoreCase("ok");
+    }
+
     private record InFlight(String cmdId, String src) {
+    }
+
+    private record ExpectedRealtime(byte b, String src, String cmdId, long deadline) {
     }
 }
