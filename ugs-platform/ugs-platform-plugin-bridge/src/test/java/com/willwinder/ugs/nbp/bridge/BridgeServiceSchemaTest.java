@@ -160,7 +160,7 @@ public class BridgeServiceSchemaTest {
 
         List<JsonObject> all = LogFiles.readAll(home);
         Set<String> kinds = all.stream().map(r -> r.get("kind").getAsString()).collect(Collectors.toSet());
-        assertEquals(Set.of("session", "authority", "event", "message", "tx", "rx", "command", "status", "file"), kinds);
+        assertEquals(Set.of("session", "authority", "event", "message", "tx", "rx", "command", "status", "file", "notify"), kinds);
         List<JsonObject> auth = all.stream().filter(r -> r.get("kind").getAsString().equals("authority")).toList();
         assertEquals(List.of(true, false, true), auth.stream()
                 .map(r -> r.getAsJsonObject("data").get("locked").getAsBoolean()).toList());

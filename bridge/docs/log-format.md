@@ -76,4 +76,15 @@ How the plugin fills the records. Fields marked "extra" are additive (allowed by
 - **`message`**: trailing newlines are stripped; UGS's VERBOSE echoes of `<…>` reports are dropped (they are in `status`).
 - **`authority`** (until authority levels exist): `level` is `observe` when locked and `query` when unlocked.
 
+## Notify details (package G)
+
+How the notifier (`bridge.notify`) fills `notify` records. Extras are additive.
+
+- One record per attempt, written when the outcome is known (so a suppressed duplicate can appear before the send it duplicates). `src` is `claude` for `claude_*` triggers, `operator` for the panel's "Send test", else `bridge`.
+- `trigger`: `stream_finished`, `stream_error`, `alarm`, `feed_hold`, `tool_change_waiting`, `connection_lost`, `claude_authority_request`, `claude_message`, `progress`, `test`, or `config`. `level`: `info|warn|alert`.
+- `sinks` has both `telegram` and `slack`: `ok`, `failed`, `disabled` (sink off, placeholder or invalid), or `rate_limited`. Extra `suppressed: duplicate|rate_limit` says which; extra `errors: {sink: "HTTP 401: Unauthorized"}` for failures (secrets scrubbed).
+- `trigger: config` is logged once at start and whenever notify.json's state changes (not per attempt): `sinks` lists only the sinks that can't send (`disabled`), extra `config: {telegram: off|placeholder|invalid|ready, slack: …}` and `file`. It is never sent.
+- Tokens and webhook URLs are never written to the log.
+- notify.json may carry an optional `dedup_seconds` (default 120, 0 = off): identical texts within that window are suppressed. `alert` level (ALARM, stream error, connection lost, failed tool change) ignores `rate_limit_per_minute` but is still de-duplicated.
+
 Validate a log with `cd bridge && uv run python scripts/validate_log.py <session.jsonl>`.
