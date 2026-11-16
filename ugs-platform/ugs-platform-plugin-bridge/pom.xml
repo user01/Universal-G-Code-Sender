@@ -12,6 +12,19 @@
     <packaging>nbm</packaging>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- the bundled machine profile (JobRuntime falls back to it without <bridge home>/profile.json) -->
+            <resource>
+                <directory>${project.basedir}/../../bridge/profiles</directory>
+                <targetPath>com/willwinder/ugs/nbp/bridge/profiles</targetPath>
+                <includes>
+                    <include>*.json</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.netbeans.utilities</groupId>

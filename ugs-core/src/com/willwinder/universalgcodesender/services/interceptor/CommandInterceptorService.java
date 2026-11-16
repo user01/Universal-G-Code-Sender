@@ -178,12 +178,15 @@ public class CommandInterceptorService implements UGSEventListener {
             activeInterceptor.execute(context);
 
             setState(InterceptorState.RESUMING);
-            restoreState(controller, stateBeforeInterception);
-            activeReader.ungate();
-            controller.getCommunicator().queueStreamForComm(activeReader);
-            controller.getCommunicator().streamCommands();
-
+            restoreState(controller, stateBeforeInterception, activeInterceptor.restoresPosition());
+            // Inactive before the stream resumes: the communicator refills the controller buffer right away, and
+            // findInterceptor() only matches while inactive, so a trigger within that first buffer-full (e.g. a
+            // second M6 a few lines later) would otherwise be sent to the controller unintercepted.
+            InterceptingGcodeStreamReader reader = activeReader;
             setState(InterceptorState.INACTIVE);
+            reader.ungate();
+            controller.getCommunicator().queueStreamForComm(reader);
+            controller.getCommunicator().streamCommands();
         } catch (InterceptAbortedException e) {
             LOGGER.log(Level.INFO, "Interceptor routine aborted by operator");
             cancelStream(controller);
@@ -264,13 +267,13 @@ public class CommandInterceptorService implements UGSEventListener {
      * modal state, spindle, coolant and feed rate and moves the machine back to the position the program was
      * at when it was intercepted, so the stream can continue from where it left off.
      */
-    private void restoreState(IController controller, GcodeState state) throws Exception {
+    private void restoreState(IController controller, GcodeState state, boolean restorePosition) throws Exception {
         String unitsCode = state.getUnits() == UnitUtils.Units.INCH ? "G20" : "G21";
         sendRestoreCommand(controller, unitsCode + " G90");
         sendRestoreCommand(controller, state.toAccessoriesCode());
 
         Position point = state.currentPoint;
-        if (point != null) {
+        if (restorePosition && point != null) {
             String horizontalMove = PartialPosition.builder(point.getUnits()).setX(point.getX()).setY(point.getY()).build().getFormattedGCode();
             if (!horizontalMove.isEmpty()) {
                 sendRestoreCommand(controller, "G90 G0" + horizontalMove);

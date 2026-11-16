@@ -21,6 +21,7 @@ package com.willwinder.ugs.nbp.interceptor;
 import com.willwinder.universalgcodesender.listeners.ControllerState;
 import com.willwinder.universalgcodesender.model.BackendAPI;
 import com.willwinder.universalgcodesender.model.events.ControllerStateEvent;
+import com.willwinder.universalgcodesender.services.interceptor.InterceptorPrompt;
 import com.willwinder.universalgcodesender.services.interceptor.InterceptorState;
 import com.willwinder.universalgcodesender.services.interceptor.InterceptorStateEvent;
 import com.willwinder.universalgcodesender.services.interceptor.UserResponse;
@@ -63,6 +64,7 @@ class GenericDialog implements InterceptorDialog {
     private JButton abortButton;
 
     private InterceptorState interceptorState = InterceptorState.INACTIVE;
+    private InterceptorPrompt prompt;
 
     GenericDialog(BackendAPI backend) {
         this.backend = backend;
@@ -75,6 +77,7 @@ class GenericDialog implements InterceptorDialog {
             close();
             return;
         }
+        prompt = event.getPrompt().orElse(null);
 
         if (dialog == null) {
             create();
@@ -148,8 +151,9 @@ class GenericDialog implements InterceptorDialog {
                 || interceptorState == InterceptorState.RUNNING
                 || interceptorState == InterceptorState.RESUMING;
 
-        headerLabel.setText(headerFor(interceptorState));
-        messageLabel.setText(bodyHtml(bodyFor(interceptorState)));
+        boolean promptText = waitingForUser && prompt != null;
+        headerLabel.setText(promptText && prompt.title() != null ? prompt.title() : headerFor(interceptorState));
+        messageLabel.setText(bodyHtml(promptText && prompt.message() != null ? prompt.message() : bodyFor(interceptorState)));
         progressBar.setVisible(busy);
 
         continueButton.setVisible(waitingForUser);
@@ -195,6 +199,6 @@ class GenericDialog implements InterceptorDialog {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
-        return "<html><body style='width: 340px'>" + escaped + "</body></html>";
+        return "<html><body style='width: 340px'>" + escaped.replace("\n", "<br>") + "</body></html>";
     }
 }

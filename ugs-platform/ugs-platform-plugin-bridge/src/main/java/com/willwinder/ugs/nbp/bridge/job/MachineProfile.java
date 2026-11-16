@@ -86,11 +86,22 @@ public class MachineProfile {
         public Double slowFeed;
         public Double retract;
         public String pin;
+        /** Outer size of the plate, mm [x, y]. */
+        public double[] outerSize;
+        /** Diameter of the plate's bore, mm (ledger B3; null until measured). */
+        public Double boreDiameter;
+        /**
+         * Vector from the bore center to the stock corner the plate registers against, mm, machine axes
+         * {@code [dx, dy]} (ledger B3; null until measured). The work XY origin is {@code center + vector}.
+         */
+        public double[] boreCenterToCorner;
     }
 
     public static class Spindle {
         public String control;
         public Double spinUpS;
+        /** Resume dwell: prefer the file's own {@code G4 P..} after {@code M3} over {@code spin_up_s} (D15). */
+        public Boolean preferFileDwell;
     }
 
     public static MachineProfile read(Path path) throws IOException {
@@ -107,6 +118,11 @@ public class MachineProfile {
 
     public double spinUpSeconds() {
         return spindle == null || spindle.spinUpS == null ? 0 : spindle.spinUpS;
+    }
+
+    /** D15: true unless the profile says {@code prefer_file_dwell: false}. */
+    public boolean preferFileDwell() {
+        return spindle == null || spindle.preferFileDwell == null || spindle.preferFileDwell;
     }
 
     public double repeatTolerance() {

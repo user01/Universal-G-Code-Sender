@@ -90,6 +90,19 @@ final class DevSnapshot {
             Graphics2D g = img.createGraphics();
             try {
                 frame.paint(g);
+                // dialogs (e.g. the tool-change prompt) are separate windows: paint them on top, where they are
+                for (java.awt.Window win : java.awt.Window.getWindows()) {
+                    if (win != frame && win.isShowing() && win.getWidth() > 0) {
+                        java.awt.Point p = win.getLocationOnScreen();
+                        java.awt.Point f = frame.getLocationOnScreen();
+                        Graphics2D wg = (Graphics2D) g.create(p.x - f.x, p.y - f.y, win.getWidth(), win.getHeight());
+                        try {
+                            win.paint(wg);
+                        } finally {
+                            wg.dispose();
+                        }
+                    }
+                }
             } finally {
                 g.dispose();
             }

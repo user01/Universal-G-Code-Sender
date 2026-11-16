@@ -62,6 +62,8 @@ public class ResumePlan {
     public Double cutFeed;
     /** M6 line the stream will run before cutting, if the resume starts in a tool-change block. */
     public Integer toolChangeInStream;
+    /** Where the preamble's spin-up dwell came from: {@code file} (the program's own G4 after M3, D15) or {@code profile}. */
+    public String spinUpSource;
     /** True when all checks pass and nothing is required: the plan can run after the operator confirms. */
     public boolean ready;
 

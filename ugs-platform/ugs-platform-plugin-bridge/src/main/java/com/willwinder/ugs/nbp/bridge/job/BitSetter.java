@@ -42,14 +42,34 @@ public final class BitSetter {
     private BitSetter() {
     }
 
-    /** {@code ref = WCO_z − S_tool}. */
+    /** {@code ref = WCO_z − S_tool}, rounded to 0.001 mm (GRBL's resolution; J-2). */
     public static double reference(double wcoZ, double triggerZ) {
-        return wcoZ - triggerZ;
+        return round3(wcoZ - triggerZ);
     }
 
-    /** {@code WCO_z = S_new + ref}. */
+    /** {@code WCO_z = S_new + ref}, rounded to 0.001 mm. */
     public static double wcoZForTool(double triggerZ, double ref) {
-        return triggerZ + ref;
+        return round3(triggerZ + ref);
+    }
+
+    /** Rounds to 0.001 mm, the resolution GRBL reports and stores ({@code -7.520000000000003} gives {@code -7.52}). */
+    public static double round3(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) {
+            return v;
+        }
+        return Math.round(v * 1000.0) / 1000.0;
+    }
+
+    /** {@link #round3(double)} per element; null stays null. */
+    public static double[] round3(double[] v) {
+        if (v == null) {
+            return null;
+        }
+        double[] out = new double[v.length];
+        for (int i = 0; i < v.length; i++) {
+            out[i] = round3(v[i]);
+        }
+        return out;
     }
 
     /** {@code G10 L2 P<n> Z<wcoZ>} for G54 (P1) .. G59 (P6). */
@@ -57,7 +77,7 @@ public final class BitSetter {
         return String.format(Locale.ROOT, "G10 L2 P%d Z%.3f", wcsIndex(wcs), wcoZ);
     }
 
-    static int wcsIndex(String wcs) {
+    public static int wcsIndex(String wcs) {
         if (wcs == null) {
             return 1;
         }

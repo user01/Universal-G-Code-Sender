@@ -44,6 +44,7 @@ import java.util.function.Consumer;
 public final class BridgeTopComponent extends TopComponent {
     private final JToggleButton lockButton = new JToggleButton();
     private final JLabel stateLabel = new JLabel();
+    private final javax.swing.JCheckBox toolChangeBox = new javax.swing.JCheckBox("BitSetter tool changes");
     private final Consumer<BridgeLock.State> lockListener = s -> SwingUtilities.invokeLater(this::refresh);
 
     public BridgeTopComponent() {
@@ -52,7 +53,16 @@ public final class BridgeTopComponent extends TopComponent {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT));
         row.add(lockButton);
         row.add(stateLabel);
+        row.add(toolChangeBox);
         add(row, BorderLayout.NORTH);
+        toolChangeBox.setToolTipText("M6 parks, asks for the tool, measures it on the BitSetter and sets Z "
+                + "(replaces UGS's own tool-change handling while on)");
+        toolChangeBox.addActionListener(e -> {
+            com.willwinder.ugs.nbp.bridge.runtime.JobRuntime rt = com.willwinder.ugs.nbp.bridge.runtime.JobRuntime.current();
+            if (rt != null) {
+                rt.setToolChangesEnabled(toolChangeBox.isSelected());
+            }
+        });
         lockButton.addActionListener(e -> {
             BridgeLock lock = BridgeService.lock();
             if (lock.isLocked()) {
@@ -79,5 +89,8 @@ public final class BridgeTopComponent extends TopComponent {
         lockButton.setSelected(!locked);
         lockButton.setText(locked ? "Unlock Claude access" : "Lock Claude access");
         stateLabel.setText(locked ? "MCP: locked" : "MCP: unlocked (Observe/Query)");
+        com.willwinder.ugs.nbp.bridge.runtime.JobRuntime rt = com.willwinder.ugs.nbp.bridge.runtime.JobRuntime.current();
+        toolChangeBox.setEnabled(rt != null);
+        toolChangeBox.setSelected(rt != null && rt.toolChangesEnabled());
     }
 }
