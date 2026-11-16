@@ -23,8 +23,8 @@ Run `uv run shapeoko-capture` from `../resurfacer` with Carbide Motion and UGS c
 |---|---|---|---|---|
 | B1 | **BitZero V2 total thickness** (aluminum block + plastic base), measured with calipers | Z zero on the stock. A wrong value cuts too deep or air-cuts | **13.0 mm** (11 mm aluminum + 2 mm plastic base, community-measured) | sourced |
 | B2 | BitZero V2 footprint | Simulator geometry; clearance moves around the block | 58 × 58 mm (from a published BitZero macro) | sourced |
-| B3 | **BitZero V2 bore diameter** and the offset from the bore center to the corner the block registers against | XY corner probing: the bore center is found by probing inside it, then the corner is the center minus this offset | unknown. Not published by Carbide 3D. The simulator uses placeholders (22 mm, 14.5 mm) | blocked |
-| B4 | Z-only placement: block flat on the stock, or with the edge guides on the surface (forum: wrong choice gives 2–5 mm errors) | Which thickness applies in Z-only mode | flat on stock, 13 mm | assumed |
+| B3 | **BitZero V2 bore-center-to-corner offset** (X and Y, from the bore center to the inside corner of the locating lips). The bore *diameter* does not affect the result: probing both walls in X and Y finds the center for any bore or pin size; it only bounds the probe travel. | XY corner probing: corner = bore center − offset; an offset error moves the corner by exactly that error | unknown. Carbide 3D publishes no dimensions; Carbide Motion has them compiled in. **Calibrate on the machine:** put the block on a scrap corner, run Carbide Motion's corner probe and note G54, then (same placement) run the bridge's bore-center probe and note the center. The difference is the offset. Or measure with calipers. Simulator placeholder: 22 mm bore, 14.5 / 14.5 mm | blocked |
+| B4 | Z-only placement | Which thickness applies in Z-only mode | **flat on the surface, full 13 mm**. The official guide says to "set the entire BitZero V2 on top of the surface to be measured". The corner cycle has the lips overhanging the stock edges with the pin inside the bore. Kit pins: 1/4 in and 1/8 in. | sourced |
 | B5 | Probe failure reply on this firmware: `ALARM:4`/`ALARM:5`, `[PRB:…:0]`, and whether an `ok` follows | Command completion and error handling | `[PRB…:0]` then `ALARM:5`, no `ok` | assumed |
 | B6 | **BitSetter machine X/Y** (spindle centered over the button) | Every tool measurement | X −4, Y −449 | assumed (from the 2026-11-15 session) |
 | B7 | BitSetter trigger machine Z with a reference tool, safe start Z, and how far is safe to probe | Bounded probe travel | start Z −5, max travel 90 mm | assumed |
@@ -58,3 +58,5 @@ Run `uv run shapeoko-capture` from `../resurfacer` with Carbide Motion and UGS c
 - BitZero V2 58 × 58 mm: Duet3D forum, "Zeroing Macro for Carbide3D BitZero".
 - Homing pull-off reading −3,−3,−3: Carbide 3D community, "Absolute x, y AND z with BitSetter on initialization".
 - BitSetter location is user-set in Carbide Motion ("Use Current X/Y"): Carbide 3D BitSetter guide.
+
+- BitZero V2 setup guide (Carbide 3D, 2021-03-08, v1.0): guides.carbide3d.com/files/pdf/BitZero_V2_Shapeoko.pdf. Placement for the corner and Z cycles, probing pins. No dimensions.
