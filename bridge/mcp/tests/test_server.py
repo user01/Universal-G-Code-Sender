@@ -26,6 +26,21 @@ EXPECTED_TOOLS = {
     "request_authority",
     "analyze_file",
     "prepare_file",
+    # Work package H: motion, origins, resume, stream.
+    "move",
+    "jog",
+    "probe",
+    "send",
+    "set_work_offset",
+    "hold",
+    "resume",
+    "reset",
+    "origins",
+    "apply_origin",
+    "job_state",
+    "plan_resume",
+    "start_resume",
+    "run_file",
 }
 
 
@@ -38,7 +53,7 @@ async def _call(client: Client, name: str, args: dict[str, Any] | None = None) -
     return _text(result), bool(result.is_error)
 
 
-async def test_tool_list_has_no_motion_tools(home: Path) -> None:
+async def test_tool_list_is_exact(home: Path) -> None:
     async with Client(build_server(BridgeClient(home))) as client:
         names = {t.name for t in (await client.list_tools()).tools}
     assert names == EXPECTED_TOOLS

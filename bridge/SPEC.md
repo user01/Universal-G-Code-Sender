@@ -144,13 +144,14 @@ Show a warning if the stock web pendant is running: it is unauthenticated and li
 | `query(cmd)` | Query | One of `?`, `$$`, `$#`, `$G`, `$I`, `$N` |
 | `move(x?, y?, z?, machine=true, feed?)` | Motion | One straight move. Checked against the envelope. Rapid unless a feed is given. Waits until Idle |
 | `jog(axis, distance, feed)` | Motion | `$J=`, bounded |
-| `probe(axis, max_distance, feed)` | Motion | `G38.2`, at most 25 mm, always relative. Restores G90 afterwards. Returns `[PRB]` and the stop position |
-| `send(lines)` | Motion | Raw lines after safety checks (§5.2). Returns the reply and console output for each line |
+| `probe(axis, max_distance, feed, retract?)` | Motion | `G38.2`, at most 25 mm, always relative. Restores G90 afterwards. Returns `[PRB]` and the stop position. Z only until the BitZero bore is known (ledger B3) |
+| `send(lines, expect)` | Motion | Raw lines after safety checks (§5.2). Returns the reply and console output for each line |
 | `set_work_offset(x?, y?, z?)` | Motion | `G10 L2 P1`, then checks it by reading `$#` |
 | `hold`, `resume`, `reset` | always | Real-time commands |
 | `analyze_file(path)` | none | Extents, tools, operations, feeds, unsupported commands (`M6`), estimated time, warnings against the envelope and stock |
 | `prepare_file(path, edits)` | none | Writes a UGS-ready copy (for example with `M6` removed) and shows a diff. Never edits the original |
 | `run_file(path)` | Stream | Loads the file; the operator confirms in UGS |
+| `origins`, `apply_origin`, `job_state`, `plan_resume`, `start_resume` | see §11.8 | |
 | `view(snapshot_of, camera?)` | none | Returns a PNG of the 3D view, so Claude can see what the operator sees |
 
 ### 5.2 Safety checks, applied before anything is sent
