@@ -165,6 +165,8 @@
                     <systemPropertyVariables>
                         <all.clusters>${all.clusters}</all.clusters>
                         <branding.token>${brandingToken}</branding.token>
+                        <!-- ugs-bridge: the platform test starts the bridge; keep its files out of the real home -->
+                        <ugs.bridge.home>${project.build.directory}/bridge-home</ugs.bridge.home>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
