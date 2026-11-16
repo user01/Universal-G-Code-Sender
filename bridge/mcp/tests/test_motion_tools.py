@@ -232,7 +232,8 @@ async def test_refusals_through_mcp(sim_fake: FakeBridge, home: Path) -> None:
             ("send", {"lines": ["M6 T21"], "expect": "tool change"}, "tool changes are confirmed"),
             ("send", {"lines": ["G91 G0 Z5"], "expect": "up 5"}, "End the lines with 'G90'"),
             ("send", {"lines": ["$130=845"], "expect": "fix travel"}, "never changes $ settings"),
-            ("send", {"lines": ["M3 S12000"], "expect": "spin"}, "doesn't start the spindle"),
+            ("send", {"lines": ["M3 S12000"], "expect": "spin"}, "the operator starts the router"),
+            ("send", {"lines": ["S12000"], "expect": "speed"}, "the operator starts the router"),
             ("send", {"lines": ["G53 G0 Z-5"], "expect": ""}, "expected outcome"),
             ("move", {"x": -500}, "outside the profile envelope X -445..0"),
             ("move", {"z": 2}, "outside the profile envelope Z -95..0"),
@@ -313,6 +314,10 @@ async def test_jog_and_send(sim_fake: FakeBridge, home: Path) -> None:
         assert not err, text
         assert "MPos X-21 Y-11 Z-5" in text
         assert "[GC:G0 G54 G17 G21 G90" in text
+        # D21: Claude may switch the router off
+        text, err = await _call(client, "send", {"lines": ["M5"], "expect": "router stops"})
+        assert not err, text
+        assert _claude_motion_tx(sim_fake)[-1] == "M5"
 
 
 async def test_hold_resume_reset(sim_fake: FakeBridge, home: Path) -> None:

@@ -32,7 +32,8 @@ import java.util.regex.Pattern;
 
 /**
  * The bridge's {@code M6} interceptor (SPEC §11.5, J3): park, operator prompt, BitSetter measurement, new G54 Z,
- * back to the pre-change XY at safe Z (D10). Registered with UGS's {@code CommandInterceptorService}; it matches
+ * back to the pre-change XY at safe Z (D10); only the tool word when the tool is already in the collet with a known
+ * length (D22). Registered with UGS's {@code CommandInterceptorService}; it matches
  * only while the bridge's "BitSetter tool changes" option is on (the runtime turns UGS's own tool-change handling
  * off for that time). The sequence itself is {@link ToolChangeRoutine}.
  *
@@ -55,9 +56,15 @@ public final class BitSetterInterceptor implements CommandInterceptor {
         /** The BitSetter reference ({@code WCO_z − S}), or null. */
         Double reference();
 
+        /**
+         * D22: the tool in the collet if its length is known for certain (measured in this connection, with no
+         * reset, alarm, homing or G54 Z change since), else null. An M6 for this tool skips the measurement.
+         */
+        String knownLengthTool();
+
         ToolChangeRoutine.Events events();
 
-        /** Called after a successful change. */
+        /** Called after a successful change (also when D22 skipped it: {@code result.measured()} is false). */
         void toolChanged(ToolChangeRoutine.Result result, java.util.List<String> sent);
 
         /** Called when the routine ends without a change (abort or failure). */
@@ -107,7 +114,8 @@ public final class BitSetterInterceptor implements CommandInterceptor {
                 ? trigger.getOriginalCommandString() : trigger.getCommandString();
         int fileLine = trigger.isGenerated() ? -1 : trigger.getCommandNumber();
         try {
-            ToolChangeRoutine.Result r = routine.toolChange(line, fileLine, host.job(), host.reference());
+            ToolChangeRoutine.Result r = routine.toolChange(line, fileLine, host.job(), host.reference(),
+                    host.knownLengthTool());
             host.toolChanged(r, routine.sent());
         } catch (InterceptAbortedException e) {
             host.toolChangeEnded("aborted", e.getMessage(), routine.sent());

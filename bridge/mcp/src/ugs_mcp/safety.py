@@ -12,6 +12,11 @@ Two layers:
   G91/G20/G93 (or another non-default mode) at the end of the call, ``M6``, spindle start,
   program-flow codes, setting writes, and anything GRBL 1.1 doesn't support.
 
+Spindle (D21): Claude may switch the router off (``M5``, ``S0``) but never on. ``M3``/``M4``
+are refused, and so is a non-zero ``S`` word: it only matters with the router on, where it
+changes the spindle output (on the BitRunner a non-zero S after ``M3 S0`` switches the router
+on). The real-time ``hold``/``reset`` paths are separate and unaffected.
+
 Positions are tracked as an interval per axis in machine coordinates: after a probe the
 contact point is somewhere between the start and the probe target, so a following relative
 move is checked at both ends.
@@ -161,6 +166,10 @@ POLICY_REFUSED_G: dict[str, str] = {
     },
 }
 SPINDLE_START = frozenset({"M3", "M4"})
+SPINDLE_REFUSAL = (
+    "Claude never switches the router on; the operator starts the router (or a file run they"
+    " confirm). Claude may switch it off with M5."
+)
 PROGRAM_FLOW = frozenset({"M0", "M1", "M2", "M30"})
 DEFAULT_MODAL = {"units": "G21", "distance": "G90", "feed_mode": "G94", "plane": "G17"}
 MODE_WORDS = {
@@ -721,12 +730,7 @@ def _line(ctx: _Ctx, n: int, raw: str, *, allow_spindle: bool) -> None:
             c.refuse("unsupported", f"{g}: {POLICY_REFUSED_G[g]}.", n)
     for mcode in ms:
         if mcode in SPINDLE_START and not allow_spindle:
-            c.refuse(
-                "spindle",
-                f"{mcode} starts the router (BitRunner). Claude doesn't start the spindle;"
-                " the operator does, or a file run they confirm.",
-                n,
-            )
+            c.refuse("spindle", f"{mcode} starts the router (BitRunner). {SPINDLE_REFUSAL}", n)
         elif mcode in PROGRAM_FLOW and not ctx.advisory:
             c.refuse(
                 "program_flow",
@@ -736,6 +740,13 @@ def _line(ctx: _Ctx, n: int, raw: str, *, allow_spindle: bool) -> None:
             )
         elif mcode == "M56":
             c.refuse("unsupported", "M56 (parking override) is not available to Claude.", n)
+    if vals.get("S", 0.0) > 0 and not allow_spindle:
+        c.refuse(
+            "spindle",
+            f"S{_n(vals['S'])} sets the spindle speed, which only matters with the router on"
+            f" (and can switch it on). {SPINDLE_REFUSAL}",
+            n,
+        )
 
     md = ctx.modal
     for g in gs:

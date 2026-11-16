@@ -156,6 +156,98 @@ public class JobRuntimeTest {
     }
 
     @Test
+    public void bitsetterToolChangesAreOnByDefaultAndTurnUgsHandlingOff() throws Exception {
+        rt.detach();
+        Files.deleteIfExists(home.resolve(RuntimeState.FILE));
+        when(settings.isHandleToolChanges()).thenReturn(true);
+        rt = newRuntime();
+        assertTrue(rt.toolChangesEnabled());
+        verify(settings).setHandleToolChanges(false);
+        assertTrue(rt.interceptor().matches(new GcodeCommand("T21M6", "T21 M6", "", 20)));
+        assertEquals(Boolean.TRUE, RuntimeState.read(home.resolve(RuntimeState.FILE)).savedHandleToolChanges);
+    }
+
+    @Test
+    public void operatorsChoiceToTurnThemOffPersists() throws Exception {
+        rt.setToolChangesEnabled(false);
+        rt.detach();
+        rt = newRuntime();
+        assertFalse(rt.toolChangesEnabled());
+        assertFalse(rt.interceptor().matches(new GcodeCommand("T21M6", "T21 M6", "", 20)));
+    }
+
+    @Test
+    public void aFileFromBeforeD20IsTurnedOn() throws Exception {
+        rt.detach();
+        Files.writeString(home.resolve(RuntimeState.FILE),
+                "{\"format\":\"" + RuntimeState.FORMAT + "\",\"bitsetter_tool_changes\":false,\"current_tool\":\"T02\"}");
+        rt = newRuntime();
+        assertTrue(rt.toolChangesEnabled());
+        assertEquals("T02", rt.state().currentTool);
+    }
+
+    @Test
+    public void connectingReappliesTheOption() {
+        when(settings.isHandleToolChanges()).thenReturn(true); // e.g. re-enabled in UGS's settings meanwhile
+        rt.UGSEvent(new ControllerStateEvent(ControllerState.IDLE, ControllerState.CONNECTING));
+        rt.awaitEvents();
+        verify(settings).setHandleToolChanges(false);
+    }
+
+    // ---------------------------------------------------------------- D22: when is the tool length known?
+
+    private static final double[] WCO = {-300, -350, -58.5};
+
+    /** Connected, idle, G54 Z -58.5 and T21 measured by a tool change. */
+    private void measuredT21() {
+        rt.UGSEvent(new ControllerStateEvent(ControllerState.IDLE, ControllerState.CONNECTING));
+        statusEvent(ControllerState.IDLE, new double[]{-1, -1, -1}, WCO);
+        rt.awaitEvents();
+        rt.toolChanged(new ToolChangeRoutine.Result("T21", "T21", -68.5, -60.0, -58.5, 10.0,
+                new double[]{-150, -300}, true), List.of());
+        rt.awaitEvents();
+    }
+
+    @Test
+    public void lengthIsKnownAfterAMeasurementInThisConnection() {
+        assertNull(rt.knownLengthTool()); // nothing measured yet
+        measuredT21();
+        assertEquals("T21", rt.knownLengthTool());
+        assertEquals("T21", rt.status().tool());
+        // a skipped change keeps it known and records the outcome
+        rt.toolChanged(new ToolChangeRoutine.Result("T21", "T21 x", null, null, null, null, null, false), List.of("T21"));
+        rt.awaitEvents();
+        assertEquals("T21", rt.knownLengthTool());
+        assertEquals("skipped", rt.status().lastToolChange().outcome());
+    }
+
+    @Test
+    public void anyDoubtForgetsTheLength() {
+        List<Runnable> doubts = List.of(
+                () -> rt.UGSEvent(new ControllerStateEvent(ControllerState.ALARM, ControllerState.IDLE)),
+                () -> rt.UGSEvent(new ControllerStateEvent(ControllerState.HOME, ControllerState.IDLE)),
+                () -> rt.UGSEvent(new ControllerStateEvent(ControllerState.DISCONNECTED, ControllerState.IDLE)),
+                () -> rt.rawResponseListener("Grbl 1.1h ['$' for help]"),
+                () -> rt.UGSEvent(new CommandEvent(CommandEventType.COMMAND_COMPLETE, homingCommand())),
+                () -> statusEvent(ControllerState.IDLE, new double[]{-1, -1, -1}, new double[]{-300, -350, -55.6}),
+                () -> rt.toolChangeEnded("aborted", "operator", List.of()));
+        for (int i = 0; i < doubts.size(); i++) {
+            measuredT21();
+            assertEquals("case " + i, "T21", rt.knownLengthTool());
+            doubts.get(i).run();
+            rt.awaitEvents();
+            assertNull("case " + i, rt.knownLengthTool());
+        }
+    }
+
+    private static GcodeCommand homingCommand() {
+        GcodeCommand c = new GcodeCommand("$H");
+        c.setResponse("ok");
+        c.setOk(true);
+        return c;
+    }
+
+    @Test
     public void stockSettingStaysOffWhenItWasOff() {
         when(settings.isHandleToolChanges()).thenReturn(false);
         rt.setToolChangesEnabled(true);

@@ -722,6 +722,12 @@
             "number",
             "null"
           ]
+        },
+        "measurement_skipped": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
         }
       },
       "required": [

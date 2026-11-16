@@ -90,7 +90,8 @@ import static org.mockito.Mockito.when;
 /**
  * Opt-in ({@code UGS_SIM_IT=1}): UGS's own GrblController over the TCP driver to {@code bridge/sim}, with the job
  * runtime attached and the BitSetter interceptor registered in a real {@link CommandInterceptorService}. Streams a
- * two-tool program; during the T21 prompt the test swaps the simulated bit ({@code tool 52.5}, +12.5 mm) and then
+ * two-tool program whose first M6 asks for T02, the tool the reference was just measured with: D22 sends only the
+ * tool word there (no prompt, no probe). During the T21 prompt the test swaps the simulated bit ({@code tool 52.5}, +12.5 mm) and then
  * confirms the prompt (only this test does that: the bridge has no way to confirm it).
  * <p>
  * Asserts: G54 Z changed by exactly the tool-length delta; the routine returned to the pre-change XY at safe Z
@@ -240,7 +241,7 @@ public class SimToolChangeIntegrationTest {
             });
             ToolChangeRoutine.Reference ref = rt.measureReference("T02", true).get(120, TimeUnit.SECONDS);
             assertEquals(G54[2] - (-105.0 + TOOL_A), ref.ref(), 0.002); // sim BitSetter top at tip Z -105
-            rt.setToolChangesEnabled(true);
+            assertTrue("D20: on by default", rt.toolChangesEnabled());
             Thread.sleep(300);
 
             // ---- stream the two-tool program through the interceptor
@@ -295,9 +296,9 @@ public class SimToolChangeIntegrationTest {
             }
 
             // ---- assertions
-            assertEquals("two prompts: " + prompts, 2, prompts.size());
-            assertEquals("Change to T02 Whiteside RD2100 1/4 in downcut", prompts.get(0).get("title").getAsString());
-            assertEquals("Change to T21 Whiteside RU1600 1/8 in upcut", prompts.get(1).get("title").getAsString());
+            // D22: the first M6 (T02, the reference tool) is confirmed without a prompt; only T21 asks the operator
+            assertEquals("one prompt: " + prompts, 1, prompts.size());
+            assertEquals("Change to T21 Whiteside RU1600 1/8 in upcut", prompts.get(0).get("title").getAsString());
             JobRuntime.ToolChangeOutcome last = rt.status().lastToolChange();
             assertEquals("changed", last.outcome());
             assertEquals("T21", last.tool());
@@ -347,6 +348,12 @@ public class SimToolChangeIntegrationTest {
                 Files.copy(sessions.get(i), dst, StandardCopyOption.REPLACE_EXISTING);
                 logCopies.add(dst.toString());
             }
+            boolean skippedT02 = false;
+            for (String c : logCopies) {
+                skippedT02 |= Files.readAllLines(Path.of(c)).stream().anyMatch(l -> l.contains("\"measurement_skipped\":true")
+                        && l.contains("\"tool\":\"T02\""));
+            }
+            assertTrue("tool record for the skipped T02 measurement", skippedT02);
             Map<String, Object> summary = new LinkedHashMap<>();
             summary.put("stream_ms", streamMs);
             summary.put("reference", ref);

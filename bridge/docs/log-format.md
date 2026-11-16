@@ -53,7 +53,7 @@ One record format serves three purposes: the JSONL session log on disk, the reco
 | `client` | MCP/viewer client connect, disconnect, auth failure | `{client: mcp\|viewer, action, remote}` |
 | `notify` | notification sent or failed | `{trigger, text, level?, sinks: {telegram?: ok\|failed\|disabled, slack?: …}}` |
 | `origin` | work offset changed or applied | `{wcs: "G54", wco: [x,y,z], method, tool?, bitsetter_ref?, origin_id?}` |
-| `tool` | tool change / BitSetter measurement | `{event: change_requested\|confirmed\|measured\|reference_set, tool?, trigger_mz?, ref?, wco_z?}` |
+| `tool` | tool change / BitSetter measurement | `{event: change_requested\|confirmed\|measured\|reference_set, tool?, trigger_mz?, ref?, wco_z?, measurement_skipped?, note?}`. D22: an `M6` for the tool already in the collet with a known length logs only `confirmed` with `measurement_skipped: true` and `note: "same tool, length known, measurement skipped"` |
 | `job` | journal checkpoint highlights (not every line) and resume actions | `{event: started\|op_start\|paused\|stopped\|completed\|resume_planned\|resume_started, file_sha256, line?, op?}` |
 
 Rules:

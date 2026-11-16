@@ -60,7 +60,7 @@ Every motion tool runs the exact lines it will send through the checker, with th
 | `rapid_below_safe_z` | `G0` moves in X/Y while the spindle is below `safe_z_machine` | profile safe Z (assumed) |
 | `modal_restore` | ending the call in G91, G20, G93 or G18/G19 | `$G` at the start |
 | `probe_*` | absolute probes, more than 25 mm, upward Z, several axes, X/Y without a bore, no or too fast feed, input active (`Pn:P`) or unknown, two probes in one call | profile `bitzero`/`bitsetter` feeds; pin letter `P` (ledger A6) |
-| `tool_change`, `spindle`, `program_flow` | `M6`, `M3`/`M4`, `M0`/`M1`/`M2`/`M30` | |
+| `tool_change`, `spindle`, `program_flow` | `M6`, `M3`/`M4` and non-zero `S` (the operator starts the router; `M5`/`S0` to switch it off are allowed, D21), `M0`/`M1`/`M2`/`M30` | |
 | `setting_write`, `system_cmd` | `$n=`, `$Nn=`, `$RST`, `$SLP`, `$C` … | |
 | `unsupported`, `syntax`, `feed_limit` | what GRBL 1.1 rejects (interpreter tables), `G28`/`G30`/`G92`/`G43.1`/`G55`–`G59`/`G38.4`/`G38.5`, motion without feed, feeds above `rapid_mm_min` | |
 | `confirm_alone`, `expect`, `line_count` | `$H`/`$X` with other lines, no stated outcome, more than 50 lines | |

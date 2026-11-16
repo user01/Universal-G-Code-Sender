@@ -161,6 +161,7 @@ Show a warning if the stock web pendant is running: it is unauthenticated and li
 - Targets must fall inside the machine envelope from the profile, not from `$130`–`$132` alone (on this machine those were wrong).
 - Probes must be bounded and start with the probe input clear.
 - Commands the controller doesn't support (`M6`, `T` with `M6`) are refused with an explanation.
+- Spindle: Claude may switch the router off (`M5`, `S0`) but never on. `M3`/`M4` and a non-zero `S` word are refused; the operator starts the router (D21).
 - Each tool call states its expected outcome, which is logged with the result.
 
 ## 6. 3D viewer
@@ -280,14 +281,17 @@ All moves the bridge generates (tool change, resume, park) go to `safe_z_machine
 - **Verify:** re-measuring the same tool must reproduce `S` within 0.05 mm, otherwise stop and tell the operator. The reference is invalidated (with a warning) when homing or the profile's BitSetter position changes.
 - Each probe uses two passes (fast, then retract and slow), stays bounded by `bitsetter_probe.max_travel`, and first checks that the probe input is clear (`Pn`).
 
-### 11.5 Tool-change interceptor (replaces the stock one when enabled)
+### 11.5 Tool-change interceptor (replaces the stock one when enabled; on by default, D20)
 
 On `M6 Tn`:
+0. If `Tn` is the tool in the collet and its length is known from a measurement in this connection (the reference tool, or the last tool measured after a change) with no reset, alarm, homing, reconnect or G54 Z change since, send only `Tn`, log a `tool` record `confirmed` with `measurement_skipped`, and continue: no park, prompt, probe or notification (D22). Any doubt runs the full sequence.
 1. `M5`, then `G53 G0 Z<safe>`, then `G53 G0` to `tool_change_park`.
 2. Notify (UGS dialog, Telegram/Slack, MCP event) with the tool from the job data: "Change to T21 Whiteside RU1600 1/8 in upcut".
 3. The operator confirms in UGS. Claude can't confirm a tool change.
 4. Check the probe input is clear, measure on the BitSetter, set `WCO_z = S_new + ref`, and log both values.
 5. Return to the **pre-change XY at `G53 Z<safe>`** and continue the stream. The program's own `M3` and moves follow. If the next motion line would start below the clearance height without its own retract, warn.
+
+Without a BitSetter reference the interceptor parks (spindle off, safe Z), says why in the UGS dialog and stops: the stream stays paused (or is cancelled if the operator presses Abort).
 
 At job start, the setup checklist (§11.7) measures the first tool to set `ref`.
 

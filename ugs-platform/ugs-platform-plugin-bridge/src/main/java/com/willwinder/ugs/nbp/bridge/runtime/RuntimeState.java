@@ -34,8 +34,13 @@ public class RuntimeState {
     public static final String FILE = "runtime.json";
 
     public String format = FORMAT;
-    /** The bridge's "BitSetter tool changes" option. */
-    public boolean bitsetterToolChanges;
+    /** The bridge's "BitSetter tool changes" option; on by default (D20). */
+    public boolean bitsetterToolChanges = true;
+    /**
+     * True once the operator set the option (panel checkbox). A file without it predates D20, when off was the
+     * default rather than a choice, so the option is turned on when such a file is read.
+     */
+    public boolean toolChangesChosen;
     /** UGS's {@code handleToolChanges} before the bridge turned it off; null when the bridge didn't. */
     public Boolean savedHandleToolChanges;
     public Reference reference;
@@ -59,6 +64,9 @@ public class RuntimeState {
             if (Files.exists(path)) {
                 RuntimeState s = Json.read(path, RuntimeState.class);
                 if (s != null && FORMAT.equals(s.format)) {
+                    if (!s.toolChangesChosen) {
+                        s.bitsetterToolChanges = true; // D20 default
+                    }
                     return s;
                 }
             }

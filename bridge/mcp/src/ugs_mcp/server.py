@@ -53,8 +53,9 @@ $N. Motion and streaming need the operator to arm them (ask with request_authori
 Motion tools (move, jog, probe, send, set_work_offset, apply_origin) check every line before
 sending: the machine must be homed and Idle, targets inside the profile envelope (machine
 coordinates), probes relative and at most 25 mm with the probe input clear, and the call must
-leave G21 G90 G94 G17 active. M6, spindle start and $ setting writes are always refused: tool
-changes and $H/$X are confirmed by the operator in UGS. hold, resume and reset always work
+leave G21 G90 G94 G17 active. M6, spindle start (M3/M4, non-zero S) and $ setting writes are
+always refused: the operator starts the router, and tool changes and $H/$X are confirmed by the
+operator in UGS. You may switch the router off with send(['M5']). hold, resume and reset always work
 while unlocked. Every motion call states its expected outcome (expect), which is logged.
 plan_resume shows a resume plan; start_resume and run_file need Stream authority and the
 operator's confirmation. analyze_file and prepare_file work on local G-code files without

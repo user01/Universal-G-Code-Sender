@@ -400,8 +400,9 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
         state tracked from the controller's $G; the call must end in G21 G90 G94 G17 (restore
         G91/G20/G93 in the same call); every target inside the profile envelope; homed and
         Idle before motion; probes relative, single-axis, <= 25 mm, input clear, one per call;
-        no M6, M3/M4, M0/M1/M2/M30, G28/G30/G92, other work systems, setting writes ($n=,
-        $N..=, $RST) or unsupported codes. `expect` (required) is the outcome you expect; it
+        no M6, M3/M4 or non-zero S (the operator starts the router; M5 to switch it off is
+        fine), M0/M1/M2/M30, G28/G30/G92, other work systems, setting writes ($n=, $N..=,
+        $RST) or unsupported codes. `expect` (required) is the outcome you expect; it
         is logged. $H or $X alone waits for the operator's confirmation in UGS."""
         if not isinstance(lines, list) or not all(isinstance(x, str) for x in lines):
             raise ToolError("lines must be a list of strings")
