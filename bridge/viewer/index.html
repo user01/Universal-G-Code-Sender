@@ -38,9 +38,22 @@
         <dl id="job-info" class="kv"></dl>
       </section>
 
+      <section id="live-section" hidden>
+        <h2>Live <span id="live-link" class="tag link connecting">connecting</span></h2>
+        <dl id="live-info" class="kv"></dl>
+        <div id="live-progress" class="progress" hidden><div class="acked"></div><div class="sent"></div></div>
+        <div class="row small">
+          <label><input id="live-follow" type="checkbox" checked> follow stream</label>
+          <label><input id="live-trail" type="checkbox" checked> trail</label>
+          <label><input id="live-dim" type="checkbox" checked> dim program</label>
+          <button id="live-clear-trail" type="button">Clear trail</button>
+        </div>
+        <ul id="probe-list" class="probe-list"></ul>
+      </section>
+
       <section id="wco-section" hidden>
-        <h2>Work offset (G54) <span class="tag warn">assumed</span></h2>
-        <p class="hint">Offline there is no WCO from the machine. The default puts the stock front-left 20&nbsp;mm in from the envelope corner, on a spoilboard 10&nbsp;mm above the lowest Z. Envelope warnings depend on this.</p>
+        <h2>Work offset (G54) <span id="wco-tag" class="tag warn">assumed</span></h2>
+        <p id="wco-hint" class="hint">Offline there is no WCO from the machine. The default puts the stock front-left 20&nbsp;mm in from the envelope corner, on a spoilboard 10&nbsp;mm above the lowest Z. Envelope warnings depend on this.</p>
         <div class="row xyz">
           <label>X <input id="wco-x" type="number" step="0.1"></label>
           <label>Y <input id="wco-y" type="number" step="0.1"></label>
@@ -101,13 +114,17 @@
       <div id="drop-overlay" hidden>Drop G-code (+ .job.json)</div>
       <div id="empty" class="empty">Open or drop a G-code file to view it.</div>
       <div id="info" class="info" hidden></div>
+      <div id="banners" class="banners" aria-live="polite"></div>
       <div id="timeline" hidden>
         <button id="play" type="button" title="Play / pause (space)">▶</button>
         <select id="scrub-mode" title="Scrub by">
           <option value="line">line</option>
           <option value="time">time</option>
         </select>
-        <input id="scrub" type="range" min="0" max="1" value="1" step="1">
+        <div class="scrub-wrap">
+          <input id="scrub" type="range" min="0" max="1" value="1" step="1">
+          <div id="scrub-progress" class="scrub-progress" hidden><div class="acked"></div><div class="sent"></div><div class="exec"></div></div>
+        </div>
         <span id="scrub-readout" class="mono"></span>
       </div>
     </main>

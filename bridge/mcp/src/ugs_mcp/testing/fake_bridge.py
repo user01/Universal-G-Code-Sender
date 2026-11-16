@@ -5,6 +5,11 @@ Serves the read endpoints, ``POST /command`` (lines go to resurfacer's ``Simulat
 and the operator lock (423 / WebSocket close 4423). Every record it emits follows
 ``bridge/schema/log-record.schema.json``.
 
+Optional, for the live viewer (api.md "Additions after W1"): a ``viewer_token`` accepted as
+``Authorization: Bearer v.<token>`` on GET endpoints and as ``WS /events?vt=<token>`` (or the
+``vt.<token>`` subprotocol), unaffected by the lock; ``GET /file/content`` after ``load_file``;
+the viewer's static files at ``/view/`` (``viewer_dir``); CORS for dev pages (``cors_origins``).
+
 It binds 127.0.0.1 on an ephemeral port, writes ``bridge.json`` and ``token`` into the
 given home directory (a temp dir in tests, never the real one) and runs uvicorn on a
 background thread. It never opens a serial port.
@@ -17,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -30,9 +36,12 @@ import uvicorn
 from shapeoko_surface.controller.grbl_parser import StatusReport, parse_status
 from shapeoko_surface.controller.simulator import SimulatedGrbl
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.routing import Route, WebSocketRoute
+from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.routing import BaseRoute, Mount, Route, WebSocketRoute
+from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ugs_mcp.config import local_profile
@@ -63,6 +72,10 @@ class FakeBridge:
         connected: bool = True,
         sim: SimulatedGrbl | None = None,
         profile: dict[str, Any] | None = None,
+        viewer_token: str | None = None,
+        viewer_dir: Path | None = None,
+        cors_origins: list[str] | None = None,
+        port: int = 0,
     ) -> None:
         self.home = Path(home)
         self.token = token
@@ -74,11 +87,16 @@ class FakeBridge:
         self.records: list[dict[str, Any]] = []
         self.commands: dict[str, dict[str, Any]] = {}
         self.file_info: dict[str, Any] | None = None
+        self.file_text: str | None = None
+        self.viewer_token = viewer_token
+        self.viewer_dir = viewer_dir
+        self.cors_origins = cors_origins
+        self._viewer_queues: set[int] = set()
         self.settings_raw: list[str] = []
         self.settings_read_at: str | None = None
         self.homed = False
         self.last_alarm: int | None = None
-        self.port = 0
+        self.port = port
         self._seq = 0
         self._req = 0
         self._t0 = time.monotonic()
@@ -123,7 +141,7 @@ class FakeBridge:
             for line in self._drain():
                 self.emit("rx", "controller", {"line": line})
         config = uvicorn.Config(
-            self.app(), host="127.0.0.1", port=0, log_level="warning", lifespan="off"
+            self.app(), host="127.0.0.1", port=self.port, log_level="warning", lifespan="off"
         )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, name="fake-bridge", daemon=True)
@@ -179,7 +197,8 @@ class FakeBridge:
             )
             if locked:
                 for q, loop, _ in list(self._subscribers):
-                    loop.call_soon_threadsafe(q.put_nowait, None)
+                    if id(q) not in self._viewer_queues:  # the lock doesn't apply to the viewer
+                        loop.call_soon_threadsafe(q.put_nowait, None)
 
     def set_level(self, level: str) -> None:
         with self._lock:
@@ -189,6 +208,25 @@ class FakeBridge:
                 "operator",
                 {"locked": self.locked, "level": self.level.value, "by": "operator"},
             )
+
+    def load_file(self, path: Path) -> dict[str, Any]:
+        """Load a program as the operator would in UGS (``GET /file``, ``/file/content``)."""
+        data = Path(path).read_bytes()
+        text = data.decode("utf-8", errors="replace")
+        with self._lock:
+            self.file_text = text
+            self.file_info = {
+                "path": str(path),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "lines": len(text.splitlines()),
+                "loaded_at": _now(),
+            }
+            self.emit(
+                "file",
+                "operator",
+                {k: self.file_info[k] for k in ("path", "sha256", "lines")} | {"action": "loaded"},
+            )
+            return dict(self.file_info)
 
     # Records -----------------------------------------------------------------------------
 
@@ -329,9 +367,14 @@ class FakeBridge:
 
     # HTTP --------------------------------------------------------------------------------
 
-    def _auth(self, request: Request) -> Response | None:
+    def _is_viewer(self, header: str) -> bool:
+        return bool(self.viewer_token) and header == f"Bearer v.{self.viewer_token}"
+
+    def _auth(self, request: Request, *, viewer_ok: bool = False) -> Response | None:
         remote = request.client.host if request.client else ""
         header = request.headers.get("authorization", "")
+        if viewer_ok and self._is_viewer(header):
+            return None  # read-only viewer token: GET only, not affected by the lock
         if header != f"Bearer {self.token}":
             self.emit(
                 "client", "bridge", {"client": "mcp", "action": "auth_failed", "remote": remote}
@@ -352,12 +395,13 @@ class FakeBridge:
         return body if isinstance(body, dict) else None
 
     def app(self) -> Starlette:
-        routes = [
+        routes: list[BaseRoute] = [
             Route(f"{API}/status", self.h_status),
             Route(f"{API}/log", self.h_log),
             Route(f"{API}/console", self.h_console),
             Route(f"{API}/settings", self.h_settings),
             Route(f"{API}/file", self.h_file),
+            Route(f"{API}/file/content", self.h_file_content),
             Route(f"{API}/profile", self.h_profile),
             Route(f"{API}/origins", self.h_origins),
             Route(f"{API}/job/state", self.h_job_state),
@@ -368,7 +412,19 @@ class FakeBridge:
             Route(f"{API}/authority/request", self.h_authority_request, methods=["POST"]),
             WebSocketRoute(f"{API}/events", self.ws_events),
         ]
-        return Starlette(routes=routes)
+        if self.viewer_dir is not None:
+            routes.append(Mount("/view", StaticFiles(directory=self.viewer_dir, html=True)))
+        middleware = []
+        if self.cors_origins:
+            middleware.append(
+                Middleware(
+                    CORSMiddleware,
+                    allow_origins=self.cors_origins,
+                    allow_methods=["GET"],
+                    allow_headers=["Authorization"],
+                )
+            )
+        return Starlette(routes=routes, middleware=middleware)
 
     def bridge_status(self) -> dict[str, Any]:
         with self._lock:
@@ -406,7 +462,7 @@ class FakeBridge:
             }
 
     async def h_status(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         return JSONResponse(self.bridge_status())
 
@@ -425,7 +481,7 @@ class FakeBridge:
         return since, (set(raw.split(",")) if raw else None), limit
 
     async def h_log(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         q = self._query_params(request)
         if isinstance(q, Response):
@@ -434,7 +490,7 @@ class FakeBridge:
         return JSONResponse({"records": records, "next": nxt})
 
     async def h_console(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         q = self._query_params(request, CONSOLE_KINDS)
         if isinstance(q, Response):
@@ -443,7 +499,7 @@ class FakeBridge:
         return JSONResponse({"records": records, "next": nxt})
 
     async def h_settings(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         settings: dict[str, Any] = {}
         for line in self.settings_raw:
@@ -463,29 +519,36 @@ class FakeBridge:
         )
 
     async def h_file(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         if self.file_info is None:
             return _err(404, "not_found", "no file loaded")
         return JSONResponse(self.file_info)
 
+    async def h_file_content(self, request: Request) -> Response:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
+            return r
+        if self.file_text is None:
+            return _err(404, "not_found", "no file loaded")
+        return PlainTextResponse(self.file_text)
+
     async def h_profile(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         return JSONResponse(self.profile)
 
     async def h_origins(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         return JSONResponse({"format": "ugs-bridge-origins/1", "origins": []})
 
     async def h_job_state(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         return _err(404, "not_found", "no job journal")
 
     async def h_command_get(self, request: Request) -> Response:
-        if (r := self._auth(request)) is not None:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         cid = request.path_params["cid"]
         with self._lock:
@@ -682,16 +745,41 @@ class FakeBridge:
         )
         return JSONResponse({}, status_code=202)
 
+    def _ws_viewer(self, ws: WebSocket) -> tuple[bool, str | None]:
+        """Viewer auth for a WebSocket: ``?vt=<token>`` or the ``vt.<token>`` subprotocol."""
+        if not self.viewer_token:
+            return False, None
+        vt = ws.query_params.get("vt")
+        if vt is not None:
+            return vt.removeprefix("v.") == self.viewer_token, None
+        protocols = [
+            p.strip() for p in ws.headers.get("sec-websocket-protocol", "").split(",") if p.strip()
+        ]
+        for p in protocols:
+            if p.startswith("vt."):
+                ok = p.removeprefix("vt.").removeprefix("v.") == self.viewer_token
+                return ok, ("ugs-bridge.v1" if "ugs-bridge.v1" in protocols else None)
+        return False, None
+
     async def ws_events(self, ws: WebSocket) -> None:
         header = ws.headers.get("authorization", "")
         remote = ws.client.host if ws.client else ""
-        if header != f"Bearer {self.token}":
+        viewer, subprotocol = self._ws_viewer(ws)
+        has_vt = "vt" in ws.query_params or "vt." in ws.headers.get("sec-websocket-protocol", "")
+        if has_vt and not viewer:
+            self.emit(
+                "client", "bridge", {"client": "viewer", "action": "auth_failed", "remote": remote}
+            )
+            await self._deny(ws, 401, "unauthorized")
+            return
+        # the viewer is read-only and not affected by the lock; the MCP client is
+        if not viewer and header != f"Bearer {self.token}":
             self.emit(
                 "client", "bridge", {"client": "mcp", "action": "auth_failed", "remote": remote}
             )
             await self._deny(ws, 401, "unauthorized")
             return
-        if self.locked:
+        if not viewer and self.locked:
             self.emit(
                 "client", "bridge", {"client": "mcp", "action": "locked_refused", "remote": remote}
             )
@@ -703,13 +791,16 @@ class FakeBridge:
             since = 0
         raw = ws.query_params.get("kinds")
         kinds = set(raw.split(",")) if raw else None
-        await ws.accept()
+        await ws.accept(subprotocol=subprotocol)
         q: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         sub = (q, asyncio.get_running_loop(), kinds)
         with self._lock:
             backlog, _ = self._select(since, kinds, 1_000_000)
             self._subscribers.append(sub)
-        self.emit("client", "bridge", {"client": "mcp", "action": "connect", "remote": remote})
+            if viewer:
+                self._viewer_queues.add(id(q))
+        client = "viewer" if viewer else "mcp"
+        self.emit("client", "bridge", {"client": client, "action": "connect", "remote": remote})
         sent = since
         try:
             for rec in backlog:
@@ -729,6 +820,7 @@ class FakeBridge:
             with self._lock:
                 if sub in self._subscribers:
                     self._subscribers.remove(sub)
+                self._viewer_queues.discard(id(q))
 
     async def _deny(self, ws: WebSocket, status: int, code: str) -> None:
         message = (

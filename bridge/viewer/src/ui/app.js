@@ -20,6 +20,7 @@ export class App {
     this.viewer.setView('machine');
     this.wco = null;
     this.wcoUser = false;
+    this.wcoSource = 'assumed'; // 'assumed' (offline default) | 'user' (typed in) | 'live' (machine WCO)
     this.pinnedLine = null;
     this.scrubLine = 0;
     this.playing = false;
@@ -47,14 +48,14 @@ export class App {
     }
   }
 
-  loadJob(gcode, sidecar = null, { wco } = {}) {
+  loadJob(gcode, sidecar = null, { wco, wcoSource, keepView = false } = {}) {
     const t0 = performance.now();
     this.gcode = gcode;
     this.sidecar = sidecar;
     const first = parseGcode(gcode.text);
     const header = parseHeader(first.lines);
     const firstJob = buildJob({ program: first, header, sidecar });
-    if (wco) { this.wco = wco; this.wcoUser = true; } else if (!this.wcoUser || !this.wco) this.wco = defaultWorkOffset(this.profile, firstJob.stock);
+    if (wco) { this.wco = wco; this.wcoUser = true; this.wcoSource = wcoSource ?? 'user'; } else if (!this.wcoUser || !this.wco) { this.wco = defaultWorkOffset(this.profile, firstJob.stock); this.wcoSource = 'assumed'; }
     this.header = header;
     this._rebuild(first);
     this.timing = { parse: performance.now() - t0 };
@@ -65,7 +66,7 @@ export class App {
     this._fillLegend();
     this._setupScrub();
     this._setupSection();
-    this.viewer.setView('iso');
+    if (!keepView) this.viewer.setView('iso');
     this._stats();
     document.title = `${gcode.name} · ugs-bridge viewer`;
   }
@@ -86,20 +87,25 @@ export class App {
     if (b.min[0] === Infinity) add([0, 0, 0], [10, 10, 10]);
     this.viewer.setJobBounds(b);
 
-    const spoilZ = this.wco[2] + (job.stock ? job.stock.min[2] : job.floor ? job.floor.z : -10);
+    // spoilboard: the profile's measured spoilboard_z_machine when set, else under the stock
+    const spoilMeasured = typeof this.profile.spoilboardZ === 'number';
+    const spoilZ = spoilMeasured ? this.profile.spoilboardZ : this.wco[2] + (job.stock ? job.stock.min[2] : job.floor ? job.floor.z : -10);
     this.viewer.setJob(program, job, warnings);
     this.viewer.setWorkOffset(this.wco, spoilZ);
-    this.viewer.setZeroLabel(`G54 zero (assumed)\nWCO X${fmt(this.wco[0], 1)} Y${fmt(this.wco[1], 1)} Z${fmt(this.wco[2], 1)}`);
+    $('wco-tag').textContent = this.wcoSource;
+    $('wco-tag').className = `tag ${this.wcoSource === 'live' ? 'live' : 'warn'}`;
+    this.viewer.setZeroLabel(`G54 zero (${this.wcoSource})\nWCO X${fmt(this.wco[0], 1)} Y${fmt(this.wco[1], 1)} Z${fmt(this.wco[2], 1)}`);
     $('wco-x').value = fmt(this.wco[0], 3); $('wco-y').value = fmt(this.wco[1], 3); $('wco-z').value = fmt(this.wco[2], 3);
-    $('spoil-z').textContent = `spoilboard at machine Z${fmt(spoilZ, 1)}`;
+    $('spoil-z').textContent = `spoilboard at machine Z${fmt(spoilZ, 1)} (${spoilMeasured ? 'profile' : 'under the stock'})`;
     this._applyToggles();
     this._fillWarnings();
     if (this.scrubLine) this.scrubTo(this.scrubLine);
   }
 
-  setWorkOffset(wco) {
+  setWorkOffset(wco, { source = 'user' } = {}) {
     this.wco = wco;
     this.wcoUser = true;
+    this.wcoSource = source;
     if (this.gcode) { this._rebuild(null); this._stats(); this.viewer.setView(this.viewer.view ?? 'iso'); }
   }
 
@@ -156,7 +162,8 @@ export class App {
     const c = warnings.counts;
     const floorTxt = job.floor ? `below floor Z${fmt(job.floor.z, 3)}` : 'below floor (no stock/floor known)';
     $('warn-summary').innerHTML = `<div class="${c.belowFloor ? 'bad' : 'ok'}">${c.belowFloor} cut segments ${esc(floorTxt)}</div>`
-      + `<div class="${c.outsideEnvelope ? 'bad' : 'ok'}">${c.outsideEnvelope} segments outside the envelope <span class="hint">(with the assumed WCO)</span></div>`;
+      + `<div class="${c.outsideEnvelope ? 'bad' : 'ok'}">${c.outsideEnvelope} segments outside the envelope <span class="hint">(with the ${this.wcoSource} WCO)</span></div>`
+      + (c.other ? `<div class="bad">${c.other} program ${c.other === 1 ? 'finding' : 'findings'} (tool changes, op tools)</div>` : '');
     const ul = $('warn-list');
     ul.innerHTML = '';
     for (const w of warnings.items.slice(0, 200)) {
@@ -185,9 +192,11 @@ export class App {
     this.viewer.toolpath.setScrub(seg);
     const t = this.program.lineTime[line] ?? 0;
     if (!fromSlider) $('scrub').value = $('scrub-mode').value === 'line' ? line : Math.round(t);
-    const opI = seg >= 0 ? this.job.opOfSeg[seg] : -1;
+    // the op that contains the line itself (D11: the tool-change block between two ops is in neither)
+    const opI = this.job.ops.findIndex((o) => line >= o.lineStart && line <= o.lineEnd);
     const op = this.job.ops[opI];
-    $('scrub-readout').textContent = `line ${line.toLocaleString()} / ${this.program.lineCount.toLocaleString()} · ${mmss(t)} / ${mmss(this.program.totalTime)}${op ? ` · ${String(op.index).padStart(2, '0')} ${op.name} ${toolId(op.tool)}` : ''}`;
+    const opText = op ? ` · ${String(op.index).padStart(2, '0')} ${op.name} ${toolId(op.tool)}` : this.job.ops.length && line >= this.job.ops[0].lineStart && line < this.program.lineCount ? ' · between operations' : '';
+    $('scrub-readout').textContent = `line ${line.toLocaleString()} / ${this.program.lineCount.toLocaleString()} · ${mmss(t)} / ${mmss(this.program.totalTime)}${opText}`;
     document.querySelectorAll('#legend li').forEach((li, i) => li.classList.toggle('current', i === opI && line < this.program.lineCount));
     this.viewer.requestRender();
   }
@@ -249,8 +258,10 @@ export class App {
     const box = $('info');
     if (!line) { box.hidden = true; this.viewer.toolpath.highlightLine(null); this.viewer.requestRender(); return; }
     if (segI < 0) segI = Math.max(0, lastSegAtOrBefore(program.seg.line, line));
-    const opI = job.opOfSeg[segI];
+    // the op that contains the LINE (a line without motion, like an M6, has no segment of its own)
+    const opI = job.ops.findIndex((o) => line >= o.lineStart && line <= o.lineEnd);
     const op = job.ops[opI];
+    const tc = program.toolChanges.find((x) => x.line === line);
     const k = program.seg.kind[segI];
     const kindName = ['rapid', 'feed', 'arc', 'probe'][k];
     const flags = program.seg.flags[segI];
@@ -268,8 +279,9 @@ export class App {
     }
     const tags = [kindName, flags & FLAG.PLUNGE ? 'plunge' : null, flags & FLAG.MACHINE ? 'G53' : null, k !== KIND.RAPID ? `F${fmt(program.seg.feed[segI], 0)}` : null].filter(Boolean).join(' · ');
     const warn = w ? `<div class="bad">${w & 1 ? 'below floor ' : ''}${w & 2 ? 'outside envelope' : ''}</div>` : '';
-    box.innerHTML = `<div class="head">Line ${line}${op ? ` · OP ${String(op.index).padStart(2, '0')} ${esc(op.name)} · ${esc(toolId(op.tool))}` : ''}${pinned ? ' · pinned (click empty space to clear)' : ''}</div>`
-      + `<div class="hint">${tags} · ${from} → ${to} (work)</div>${warn}<pre>${code.join('\n')}</pre>`;
+    const where = op ? ` · OP ${String(op.index).padStart(2, '0')} ${esc(op.name)} · ${esc(toolId(op.tool))}` : ` · no operation${tc ? ` (tool change to ${esc(toolId(tc.tool))})` : ''}`;
+    box.innerHTML = `<div class="head">Line ${line}${where}${pinned ? ' · pinned (click empty space to clear)' : ''}</div>`
+      + `<div class="hint">${program.seg.line[segI] === line ? '' : `no move on this line · last move (line ${program.seg.line[segI]}): `}${tags} · ${from} → ${to} (work)</div>${warn}<pre>${code.join('\n')}</pre>`;
     box.hidden = false;
     this.viewer.toolpath.highlightLine(line);
     this.viewer.requestRender();
@@ -341,6 +353,7 @@ export class App {
     $('wco-apply').addEventListener('click', () => this.setWorkOffset([Number($('wco-x').value), Number($('wco-y').value), Number($('wco-z').value)]));
     $('wco-default').addEventListener('click', () => {
       this.wcoUser = false;
+      this.wcoSource = 'assumed';
       this.wco = defaultWorkOffset(this.profile, this.job?.stock);
       if (this.gcode) { this._rebuild(null); this.viewer.setView(this.viewer.view ?? 'iso'); }
     });
