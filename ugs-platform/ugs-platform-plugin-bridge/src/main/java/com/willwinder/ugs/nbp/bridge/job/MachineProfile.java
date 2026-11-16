@@ -37,6 +37,10 @@ public class MachineProfile {
     public BitZeroConfig bitzero;
     public Spindle spindle;
     public Boolean connectResetsController;
+    /** GRBL planner blocks; the controller's {@code [OPT:…]} wins when it has been seen. */
+    public Integer plannerBlocks;
+    /** GRBL serial RX buffer in bytes; the controller's {@code [OPT:…]} wins when it has been seen. */
+    public Integer rxBufferBytes;
 
     public static class Envelope {
         public double[] min;

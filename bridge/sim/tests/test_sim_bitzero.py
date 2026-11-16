@@ -214,8 +214,9 @@ def test_legacy_follow_plate_still_z_only_semantics(
     assert z == pytest.approx(TOP_SPINDLE, abs=1e-3)
     homed.command("G90")
     # BitSetter (a point switch): an XY move over it below its top triggers.
-    goto(homed, -20.0, -449.0, -66.0)  # tip at -106: 1 mm below the setter top (-105)
-    assert prb(homed.command("G91 G38.2 X20 F200"))[0] == pytest.approx(-8.0, abs=1e-3)
+    goto(homed, -20.0, -448.2, -66.0)  # tip at -106: 1 mm below the setter top (-105)
+    # the button sits at X-4.2 (profile, ledger B6) with a 4 mm radius
+    assert prb(homed.command("G91 G38.2 X20 F200"))[0] == pytest.approx(-8.2, abs=1e-3)
 
 
 # ------------------------------------------------------- XYZ corner routine

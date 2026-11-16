@@ -61,7 +61,7 @@ public final class JournalTracker {
     private final Records records;
     private final Clock clock;
     private final long minIntervalMs;
-    private final PlannerModel planner;
+    private volatile PlannerModel planner;
     private JobModel job;
     private JobState state;
     private JournalWriter writer;
@@ -73,6 +73,17 @@ public final class JournalTracker {
         this.clock = clock;
         this.minIntervalMs = minIntervalMs;
         this.planner = planner;
+    }
+
+    /** The planner model used for {@code line_done} (the controller's {@code $I} can refine it after connect). */
+    public void setPlanner(PlannerModel planner) {
+        if (planner != null) {
+            this.planner = planner;
+        }
+    }
+
+    public PlannerModel planner() {
+        return planner;
     }
 
     /** True while a journal is open (from stream start until the next start). */

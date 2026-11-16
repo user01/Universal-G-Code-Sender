@@ -168,6 +168,22 @@
       ],
       "description": "max rapid rate for time estimates when a file has no (Rapids:) header"
     },
+    "planner_blocks": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "GRBL planner blocks, as $I reports in [OPT:<codes>,<blocks>,<rx bytes>]; the live $I value wins"
+    },
+    "rx_buffer_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 16,
+      "description": "GRBL serial RX buffer bytes, as $I reports in [OPT:<codes>,<blocks>,<rx bytes>]; the live $I value wins"
+    },
     "spoilboard_z_machine": {
       "type": [
         "number",

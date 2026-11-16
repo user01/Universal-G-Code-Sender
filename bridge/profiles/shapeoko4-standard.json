@@ -25,8 +25,8 @@
   ],
   "bitsetter": {
     "xy": [
-      -4.0,
-      -449.0
+      -4.2,
+      -448.2
     ],
     "start_z_machine": -5.0,
     "max_travel": 90.0,
@@ -68,6 +68,10 @@
     "$132": 95
   },
   "rapid_mm_min": 5000,
+  "_rapid_note": "the controller allows 10000 mm/min on X/Y ($110/$111, ledger A2), but rapid_mm_min is also the MCP feed cap for Claude's moves, so it stays at 5000",
+  "planner_blocks": 14,
+  "rx_buffer_bytes": 128,
+  "_planner_note": "from the controller's $I [OPT:VNPR,14,128] (ledger A4); the bridge uses the live $I value once it has seen one. BitSetter xy measured 2026-11-16 (ledger B6)",
   "spoilboard_z_machine": null,
   "_ledger": "bridge/docs/machine-ledger.md"
 }

@@ -4,4 +4,5 @@ OpenIDE-Module-Java-Dependencies: Java > 1.8
 OpenIDE-Module-Specification-Version: ${ugs.modules.specification.version}
 AutoUpdate-Essential-Module: true
 OpenIDE-Module-Layer: com/willwinder/ugs/platform/visualizer/layer.xml
+OpenIDE-Module-Install: com/willwinder/ugs/nbm/visualizer/jogl/GlStartup.class
 

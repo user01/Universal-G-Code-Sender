@@ -31,6 +31,7 @@ import com.willwinder.ugs.nbp.bridge.job.JobState;
 import com.willwinder.ugs.nbp.bridge.job.Json;
 import com.willwinder.ugs.nbp.bridge.job.MachineProfile;
 import com.willwinder.ugs.nbp.bridge.job.OriginStore;
+import com.willwinder.ugs.nbp.bridge.job.PlannerModel;
 import com.willwinder.ugs.nbp.bridge.job.ResumeContext;
 import com.willwinder.ugs.nbp.bridge.job.ResumePlan;
 import com.willwinder.ugs.nbp.bridge.job.ResumePlanner;
@@ -884,6 +885,8 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
                 }
             }
             ResumeContext ctx = new ResumeContext();
+            com.willwinder.ugs.nbp.bridge.runtime.JobRuntime rtm = com.willwinder.ugs.nbp.bridge.runtime.JobRuntime.current();
+            ctx.planner = rtm != null ? rtm.planner() : PlannerModel.forProfile(profile);
             ctx.homed = d.state().homed();
             ctx.currentWco = d.state().wco();
             ctx.currentTool = optString(body, "tool");

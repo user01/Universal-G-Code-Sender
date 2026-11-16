@@ -162,6 +162,12 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <!-- ugs-bridge P9: ModuleInstall (GlStartup) -->
+            <groupId>org.netbeans.api</groupId>
+            <artifactId>org-openide-modules</artifactId>
+            <version>${netbeans.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.jogamp.gluegen</groupId>
             <artifactId>gluegen-rt-main</artifactId>
             <version>${gluegen.version}</version>

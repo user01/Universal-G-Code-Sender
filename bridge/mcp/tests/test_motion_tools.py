@@ -2,7 +2,7 @@
 
 The simulator (``bridge/sim``, ``ugs_sim.machine.ShapeokoGrbl``) models the BitSetter and the
 BitZero from the machine profile: plate 13 mm (sourced, ledger B1), default tool 40 mm, stock
-top at tool-tip Z -95.6, BitSetter top at tip Z -105 at X-4 Y-449. Time runs instantly
+top at tool-tip Z -95.6, BitSetter top at tip Z -105 at X-4.2 Y-448.2. Time runs instantly
 (``time_scale=inf``) except where a test needs motion in progress.
 """
 
@@ -201,13 +201,13 @@ async def test_bitzero_z_probe_flow(sim_fake: FakeBridge, home: Path) -> None:
 async def test_bitsetter_probe_and_tool_change_delta(sim_fake: FakeBridge, home: Path) -> None:
     _armed_and_homed(sim_fake)
     async with _client(home) as client:
-        await _call(client, "move", {"x": -4, "y": -449, "z": -5})
+        await _call(client, "move", {"x": -4.2, "y": -448.2, "z": -5})
         text, err = await _call(client, "move", {"z": -45})
         assert not err, text
         text, err = await _call(client, "probe", {"axis": "Z", "max_distance": 25, "feed": 200})
         assert not err, text
         assert f"Z{BITSETTER_CONTACT_Z:g}" in text.split("Contact at machine")[1]
-        assert "This is the BitSetter position (profile X-4 Y-449, assumed; ledger B6)" in text
+        assert "This is the BitSetter position (profile X-4.2 Y-448.2, assumed; ledger B6)" in text
         assert "BitZero" not in text
 
         # The operator installs a 12.5 mm longer tool: its tip now rests on the button.
@@ -219,7 +219,7 @@ async def test_bitsetter_probe_and_tool_change_delta(sim_fake: FakeBridge, home:
         assert not err, text
         text, err = await _call(client, "probe", {"axis": "Z", "max_distance": 25, "feed": 50})
         assert not err, text
-        assert "Contact at machine X-4 Y-449 Z-52.5" in text  # 12.5 mm higher
+        assert "Contact at machine X-4.2 Y-448.2 Z-52.5" in text  # 12.5 mm higher
 
 
 async def test_refusals_through_mcp(sim_fake: FakeBridge, home: Path) -> None:

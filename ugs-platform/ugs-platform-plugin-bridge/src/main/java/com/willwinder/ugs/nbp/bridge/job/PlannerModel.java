@@ -18,6 +18,9 @@
  */
 package com.willwinder.ugs.nbp.bridge.job;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 /**
  * Controller buffering assumptions used to decide which acknowledged lines may not have executed (SPEC §11.6).
  *
@@ -30,7 +33,45 @@ package com.willwinder.ugs.nbp.bridge.job;
  */
 public record PlannerModel(int plannerBlocks, int rxBufferBytes, boolean ackMeansSent, double positionToleranceMm) {
 
+    /** Stock GRBL 1.1 ({@code [OPT:…,15,128]}). The Carbide 3D build on the Shapeoko reports 14 blocks. */
     public static final PlannerModel GRBL = new PlannerModel(15, 128, false, 0.05);
+
+    /** {@code [OPT:<codes>,<planner blocks>,<rx buffer bytes>]} from {@code $I}. */
+    private static final Pattern OPT = Pattern.compile("\\[OPT:[^,\\]]*,(\\d+),(\\d+)");
+
+    /**
+     * The planner as the controller reports it in {@code $I}: {@code base} with the block count and RX buffer
+     * size from an {@code [OPT:…]} line, or {@code base} unchanged when the text has none (or nonsense values).
+     */
+    public static PlannerModel fromOpt(String text, PlannerModel base) {
+        if (text == null) {
+            return base;
+        }
+        Matcher m = OPT.matcher(text);
+        if (!m.find()) {
+            return base;
+        }
+        try {
+            int blocks = Integer.parseInt(m.group(1));
+            int rx = Integer.parseInt(m.group(2));
+            if (blocks < 1 || blocks > 64 || rx < 16 || rx > 4096) {
+                return base;
+            }
+            return new PlannerModel(blocks, rx, base.ackMeansSent(), base.positionToleranceMm());
+        } catch (NumberFormatException e) {
+            return base;
+        }
+    }
+
+    /** The profile's {@code planner_blocks} / {@code rx_buffer_bytes} over {@link #GRBL}. */
+    public static PlannerModel forProfile(MachineProfile p) {
+        if (p == null) {
+            return GRBL;
+        }
+        int blocks = p.plannerBlocks != null && p.plannerBlocks > 0 ? p.plannerBlocks : GRBL.plannerBlocks();
+        int rx = p.rxBufferBytes != null && p.rxBufferBytes > 0 ? p.rxBufferBytes : GRBL.rxBufferBytes();
+        return new PlannerModel(blocks, rx, GRBL.ackMeansSent(), GRBL.positionToleranceMm());
+    }
 
     public PlannerModel withTolerance(double tolMm) {
         return new PlannerModel(plannerBlocks, rxBufferBytes, ackMeansSent, tolMm);

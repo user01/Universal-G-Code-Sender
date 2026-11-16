@@ -10,23 +10,23 @@ Run `uv run shapeoko-capture` from `../resurfacer` with Carbide Motion and UGS c
 
 | # | Fact | Why it matters | Current value | Status |
 |---|---|---|---|---|
-| A1 | `$130`/`$131`/`$132` max travel | Envelope checks; the simulator's `$$` | 445 / 456 / 95 in the profile; the controller read **845 / 850** on 2026-11-15 | assumed |
-| A2 | `$110`–`$112` max rates | Rapid-rate estimate (`rapid_mm_min`) | 5000 mm/min | assumed |
-| A3 | `$10` status mask, `$22`–`$27` homing settings | MPos vs WPos parsing; the homing signature that invalidates the BitSetter reference (D9) | MPos; pull-off 3 mm (community: machine reads −3,−3,−3 after homing) | assumed |
-| A4 | Banner, `$I` (`[VER:…]`, `[OPT:…]`), `$N0`/`$N1` | Simulator realism; startup blocks Carbide Motion may have left (`M56P0`?) | `Grbl 1.1f`, `[OPT:V,15,128]` | assumed |
+| A1 | `$130`/`$131`/`$132` max travel | Envelope checks; the simulator's `$$` | controller reads **845 / 850 / 95** (2026-11-16). The operator confirms a **standard** Shapeoko 4, so the profile keeps the 445 / 456 / 95 envelope. Soft limits (`$20=0`) and hard limits (`$21=0`) are off, so `$130`/`$131` only set the homing search distance | verified (values); envelope still per profile (C6) |
+| A2 | `$110`–`$112` max rates | Rapid-rate estimate (`rapid_mm_min`) | **10000 / 10000 / 1000 mm/min**; accel `$120`–`$122` **500 / 500 / 270 mm/s²**. The profile's `rapid_mm_min` stays 5000 because it is also the MCP feed cap for Claude's moves | verified |
+| A3 | `$10` status mask, `$22`–`$27` homing settings | MPos vs WPos parsing; the homing signature that invalidates the BitSetter reference (D9) | `$10=255` (MPos), `$22=1`, `$23=0`, `$24=100`, `$25=2000`, `$26=25`, `$27=3`. **MPos after homing −3, −3, −3** | verified (2026-11-16) |
+| A4 | Banner, `$I` (`[VER:…]`, `[OPT:…]`), `$N0`/`$N1` | Simulator realism; resume back-up depth; startup blocks Carbide Motion may have left (`M56P0`?) | `Grbl 1.1f`, **`[VER:1.1f.20170131:]` `[OPT:VNPR,14,128]`: 14 planner blocks** (profile `planner_blocks: 14`; the bridge uses the live `$I` value). `$N` not read yet (needs Query) | verified except `$N` |
 | A5 | Opening the port resets the controller (DTR) and comes up in alarm | Connect handling, "must re-home" rule | yes (seen 2026-11-15) | sourced |
-| A6 | Pin letters in `Pn:` for the BitZero and the BitSetter, and whether `$5` inverts them | Probe-clear checks before every probe | both `P`, not inverted | assumed |
+| A6 | Pin letters in `Pn:` for the BitZero and the BitSetter, and whether `$5` inverts them | Probe-clear checks before every probe | **both `Pn:P`, `$6=0` (not inverted)**; clear when released | verified (2026-11-16) |
 
 ## B. Probing hardware (needs calipers, then gentle motion)
 
 | # | Fact | Why it matters | Current value | Status |
 |---|---|---|---|---|
-| B1 | **BitZero V2 total thickness** (aluminum block + plastic base), measured with calipers | Z zero on the stock. A wrong value cuts too deep or air-cuts | **13.0 mm** (11 mm aluminum + 2 mm plastic base, community-measured) | sourced |
+| B1 | **BitZero V2 total thickness** (aluminum block + plastic base), measured with calipers | Z zero on the stock. A wrong value cuts too deep or air-cuts | profile **13.0 mm**. Calipers 2026-11-16: **13.1–13.45 mm** depending on where the jaws sit (the base flexes). Too wide to pick from calipers: calibrate with a paper test in D1 (BitZero Z, then lower onto the stock until paper grips; the difference is the effective thickness). 13.0 errs toward Z0 slightly high (shallow cuts) | sourced; calibrating |
 | B2 | BitZero V2 footprint | Simulator geometry; clearance moves around the block | 58 × 58 mm (from a published BitZero macro) | sourced |
 | B3 | **BitZero V2 bore-center-to-corner offset** (X and Y, from the bore center to the inside corner of the locating lips). The bore *diameter* does not affect the result: probing both walls in X and Y finds the center for any bore or pin size; it only bounds the probe travel. | XY corner probing: corner = bore center − offset; an offset error moves the corner by exactly that error | unknown. Carbide 3D publishes no dimensions; Carbide Motion has them compiled in. **Calibrate on the machine:** put the block on a scrap corner, run Carbide Motion's corner probe and note G54, then (same placement) run the bridge's bore-center probe and note the center. The difference is the offset. Or measure with calipers. Simulator placeholder: 22 mm bore, 14.5 / 14.5 mm | blocked |
 | B4 | Z-only placement | Which thickness applies in Z-only mode | **flat on the surface, full 13 mm**. The official guide says to "set the entire BitZero V2 on top of the surface to be measured". The corner cycle has the lips overhanging the stock edges with the pin inside the bore. Kit pins: 1/4 in and 1/8 in. | sourced |
 | B5 | Probe failure reply on this firmware: `ALARM:4`/`ALARM:5`, `[PRB:…:0]`, and whether an `ok` follows | Command completion and error handling | `[PRB…:0]` then `ALARM:5`, no `ok` | assumed |
-| B6 | **BitSetter machine X/Y** (spindle centered over the button) | Every tool measurement | X −4, Y −449 | assumed (from the 2026-11-15 session) |
+| B6 | **BitSetter machine X/Y** (spindle centered over the button) | Every tool measurement | **X −4.2, Y −448.2** (MPos X −4.200 Y −448.225 with the bit ~5 mm above the button, button not pressed; MPos Z −66.010) | verified (2026-11-16, by eye) |
 | B7 | BitSetter trigger machine Z with a reference tool, safe start Z, and how far is safe to probe | Bounded probe travel | start Z −5, max travel 90 mm | assumed |
 | B8 | BitSetter **repeatability**: 10 measurements of one tool, report spread | `repeat_tolerance` (0.05 mm) for the "same tool re-measured" check | 0.05 mm | assumed |
 | B9 | Spoilboard surface machine Z with the reference tool | Viewer placement, "below spoilboard" warnings | not set | blocked |

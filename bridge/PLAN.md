@@ -46,6 +46,7 @@ Status 2026-11-15. Companion to `SPEC.md` (v0.1). Decisions here override the SP
 |---|---|---|---|
 | P1 | `types/GcodeCommand`, `GrblCommandLogger`, `GrblHalCommandLogger` (+ `GrblCommandLoggerTest`) | optional `origin` field (`get/setOrigin`); `commandSent` echo becomes `[origin] >>> cmd` when set. Landed in W2 E/F | `[claude]` in the console |
 | P8 | `ugs-platform/application/pom.xml` (surefire) | `ugs.bridge.home` → `target/bridge-home` for `ApplicationTest` | The platform test booted the bridge and wrote to the real bridge home |
+| P9 | `ugs-platform/ugs-platform-visualizer`: new `jogl/GlStartup.java` (`ModuleInstall`), `OpenIDE-Module-Install` in `src/main/nbm/manifest.mf`, `org-openide-modules` dependency in `pom.xml` | Calls `GLProfile.initSingleton()` in `restored()`, off the EDT and before any window opens | Startup deadlock on macOS (2026-11-16): the visualizer's first `GLCapabilities` on the EDT waits for the AppKit thread (`OSXUtil.RunOnMainThread`) while AppKit waits for the EDT in an accessibility query (`CAccessibility.invokeAndWait`). The race can't be reproduced on demand; verified by build only |
 | P2 | `ugs-platform/pom.xml`, `ugs-platform/application/pom.xml` | register `ugs-platform-plugin-bridge` | module in the app build |
 | P3 | `communicator/ICommunicatorListener` | new default method `realtimeByteSent(byte)` | real-time bytes visible to listeners |
 | P3 | `communicator/BufferedCommunicator` | `sendByteImmediately` dispatches `realtimeByteSent` before the write | hold, resume, reset, jog cancel, overrides logged as `tx` |

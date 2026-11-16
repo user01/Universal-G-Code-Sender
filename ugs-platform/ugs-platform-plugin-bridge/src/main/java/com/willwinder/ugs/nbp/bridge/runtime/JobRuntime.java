@@ -192,7 +192,7 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
         this.statePath = home.resolve(RuntimeState.FILE);
         this.state = RuntimeState.read(statePath);
         this.origins = new OriginTracker(home.resolve(ORIGINS_FILE), records, clock, this::originContext);
-        this.journal = new JournalTracker(records, clock, 1000, PlannerModel.GRBL);
+        this.journal = new JournalTracker(records, clock, 1000, PlannerModel.forProfile(profile));
         this.interceptor = new BitSetterInterceptor(this);
     }
 
@@ -504,6 +504,9 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
             events.execute(origins::onProbe);
         } else if (WELCOME.matcher(response).find()) {
             events.execute(this::forgetToolLength);
+        } else if (response.contains("[OPT:")) {
+            // $I: the controller's real planner size (the Shapeoko's Carbide build reports 14 blocks, not 15)
+            events.execute(() -> journal.setPlanner(PlannerModel.fromOpt(response, PlannerModel.forProfile(profile))));
         }
     }
 
@@ -857,6 +860,7 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
             ctx.bitsetterRef = reference();
             ctx.toolLengthKnown = toolMeasuredThisConnection;
             ctx.powerLoss = j != null && "crashed".equals(j.stream);
+            ctx.planner = journal.planner();
             if (adjust != null) {
                 adjust.accept(ctx);
             }
@@ -975,6 +979,26 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
             }
         });
         return out;
+    }
+
+    /** The planner model in use (the profile's, refined by the controller's {@code $I} after connect). */
+    public PlannerModel planner() {
+        return journal.planner();
+    }
+
+    /**
+     * The tool to suggest for a reference measurement: the first tool of the loaded job, else the tool the bridge
+     * last knew in the collet, else null.
+     */
+    public String suggestedReferenceTool() {
+        try {
+            return call(() -> {
+                loadJob(currentFile());
+                return firstTool();
+            });
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public CompletableFuture<ToolChangeRoutine.Reference> measureReference(boolean verifyRepeat) {
