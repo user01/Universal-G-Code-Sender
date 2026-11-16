@@ -1,7 +1,8 @@
 """ugs-mcp: Claude's side of ugs-bridge (bridge/SPEC.md §5), over stdio.
 
-Work package C: Observe and Query tools plus the offline file tools. Motion tools (move, jog,
-probe, send, set_work_offset, hold/resume/reset, run_file) arrive with package H.
+Observe and Query tools and the offline file tools live here (work package C); the motion,
+origin, resume and stream tools with their safety checks are in :mod:`ugs_mcp.motion_tools`
+(work package H).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from ugs_mcp.config import local_profile
 from ugs_mcp.describe import ERRORS, record_line, settings_text, status_text
 from ugs_mcp.gcode.analyze import analyze_path
 from ugs_mcp.gcode.prepare import PrepareError, prepare
+from ugs_mcp.motion_tools import register_motion_tools
 from ugs_mcp.safety import QUERY_LINES, normalize
 
 T = TypeVar("T")
@@ -48,8 +50,15 @@ Tools for a Shapeoko 4 (GRBL 1.1) run by Universal Gcode Sender with the ugs-bri
 The operator controls what you may do from the UGS bridge panel: when UGS access is locked you
 get nothing; Observe/Query let you read status, logs and settings and send ?, $$, $#, $G, $I,
 $N. Motion and streaming need the operator to arm them (ask with request_authority).
-analyze_file and prepare_file work on local G-code files without UGS. prepare_file never
-edits the original; it writes a sibling copy and returns a diff."""
+Motion tools (move, jog, probe, send, set_work_offset, apply_origin) check every line before
+sending: the machine must be homed and Idle, targets inside the profile envelope (machine
+coordinates), probes relative and at most 25 mm with the probe input clear, and the call must
+leave G21 G90 G94 G17 active. M6, spindle start and $ setting writes are always refused: tool
+changes and $H/$X are confirmed by the operator in UGS. hold, resume and reset always work
+while unlocked. Every motion call states its expected outcome (expect), which is logged.
+plan_resume shows a resume plan; start_resume and run_file need Stream authority and the
+operator's confirmation. analyze_file and prepare_file work on local G-code files without
+UGS. prepare_file never edits the original; it writes a sibling copy and returns a diff."""
 
 
 async def _guard[T](aw: Awaitable[T]) -> T:
@@ -235,6 +244,7 @@ def build_server(client: BridgeClient | None = None) -> MCPServer:
         except OSError as exc:
             raise ToolError(f"couldn't write the copy: {exc}") from None
 
+    register_motion_tools(mcp, bridge, active_profile)
     return mcp
 
 
