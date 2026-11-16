@@ -124,6 +124,12 @@ public final class Messages {
                 + (file == null ? "" : " — during " + file + (line > 0 ? " at line " + count(line) : ""));
     }
 
+    public static String controllerSilent(String port, double ageSeconds, String file, int line) {
+        return "🔇 The controller stopped answering" + (port == null ? "" : " (" + port + ")")
+                + String.format(java.util.Locale.ROOT, ": no status for %.0f s, it may be frozen or disconnected", ageSeconds)
+                + (file == null ? "" : " — during " + file + (line > 0 ? " at line " + count(line) : ""));
+    }
+
     public static String progress(int percent, String file, int line, int lines, Double elapsedSeconds) {
         StringBuilder s = new StringBuilder("▶ ").append(percent).append(" % — ").append(file)
                 .append(", line ").append(count(line)).append(" of ").append(count(lines));

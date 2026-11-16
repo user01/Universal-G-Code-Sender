@@ -46,6 +46,20 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public final class StateTracker implements Consumer<LogRecord> {
+    /** A controller that sends no status report for this long while connected is reported as silent. */
+    public static final long SILENT_AFTER_MS = 5_000;
+
+    private final java.util.function.LongSupplier clock;
+
+    public StateTracker() {
+        this(System::currentTimeMillis);
+    }
+
+    /** @param clock milliseconds since the epoch (tests pass a fake clock) */
+    public StateTracker(java.util.function.LongSupplier clock) {
+        this.clock = clock;
+    }
+
     /** Machine events other parts react to (authority expiry, dropping queued Claude commands). */
     public enum Trigger { ALARM, RESET, DISCONNECT, CONNECT }
 
@@ -73,6 +87,8 @@ public final class StateTracker implements Consumer<LogRecord> {
     private String session;
     private JsonObject controller;
     private long statusSeq;
+    private long statusAtMillis;
+    private String statusAt;
     private boolean homed;
     private JsonObject alarm;
     private String streamState = "idle";
@@ -128,6 +144,8 @@ public final class StateTracker implements Consumer<LogRecord> {
                 c.remove("heartbeat");
                 controller = c;
                 statusSeq = r.seq();
+                statusAtMillis = clock.getAsLong();
+                statusAt = t;
                 String state = str(c, "state");
                 if (alarm != null && state != null && !"Alarm".equals(state)) {
                     alarm = null;
@@ -274,6 +292,8 @@ public final class StateTracker implements Consumer<LogRecord> {
         homed = false;
         alarm = null;
         controller = null;
+        statusAtMillis = 0;
+        statusAt = null;
         interceptor = null;
         streamState = "idle";
         pendingSettings.clear();
@@ -328,6 +348,32 @@ public final class StateTracker implements Consumer<LogRecord> {
         return statusSeq;
     }
 
+    /**
+     * Seconds since the last controller status record while connected (UGS polls about 5 times a second and the log
+     * writes a heartbeat every second, so a healthy controller stays near 1 s), or -1 when not connected or no report
+     * has arrived yet.
+     */
+    public synchronized double reportAgeSeconds() {
+        if (!connected || controller == null || statusAtMillis == 0) {
+            return -1;
+        }
+        return Math.max(0, clock.getAsLong() - statusAtMillis) / 1000.0;
+    }
+
+    /** {@code controller_report} of BridgeStatus: {seq, at, age_s}, or null without a report this connection. */
+    public synchronized JsonObject controllerReport() {
+        double age = reportAgeSeconds();
+        if (age < 0) {
+            return null;
+        }
+        JsonObject o = new JsonObject();
+        o.addProperty("seq", statusSeq);
+        o.addProperty("at", statusAt);
+        o.addProperty("age_s", Math.round(age * 1000) / 1000.0);
+        o.addProperty("silent", age * 1000 >= SILENT_AFTER_MS);
+        return o;
+    }
+
     /** The {@code connection}, {@code controller}, {@code homed_this_connection}, {@code alarm}, {@code stream},
      *  {@code interceptor} and {@code tool} parts of BridgeStatus. */
     public synchronized void fillStatus(JsonObject s) {
@@ -339,6 +385,8 @@ public final class StateTracker implements Consumer<LogRecord> {
         c.addProperty("session", connected ? session : null);
         s.add("connection", c);
         s.add("controller", controller == null ? JsonNull.INSTANCE : controller.deepCopy());
+        JsonObject report = controllerReport();
+        s.add("controller_report", report == null ? JsonNull.INSTANCE : report);
         s.addProperty("homed_this_connection", homed);
         s.add("alarm", alarm == null ? JsonNull.INSTANCE : alarm.deepCopy());
         JsonObject st = new JsonObject();

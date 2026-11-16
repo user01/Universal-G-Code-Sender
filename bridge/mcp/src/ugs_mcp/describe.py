@@ -9,6 +9,8 @@ from typing import Any
 
 from shapeoko_surface.controller.grbl_settings import SETTING_NAMES
 
+from ugs_mcp.safety import STALE_REPORT_S
+
 ALARMS: dict[int, str] = {
     1: "hard limit triggered; position is lost, re-home",
     2: "soft limit: the target is outside the machine travel",
@@ -100,12 +102,31 @@ def alarm_words(code: int | None, text: str | None = None) -> str:
     return f"ALARM:{code}: {text or ALARMS.get(code, 'unknown alarm')}"
 
 
+def report_age(s: dict[str, Any]) -> float | None:
+    """Seconds since the last controller status report, or None if the bridge doesn't say."""
+    rep = s.get("controller_report")
+    if not isinstance(rep, dict) or rep.get("age_s") is None:
+        return None
+    return float(rep["age_s"])
+
+
+def silent_text(age: float) -> str:
+    return (
+        f"NO STATUS FROM CONTROLLER for {age:.0f} s: it may be frozen or disconnected (UGS still"
+        " shows it connected). The state and positions below are from the last report, not now."
+        " Ask the operator to check the controller and USB, then disconnect and reconnect in UGS."
+    )
+
+
 def status_text(s: dict[str, Any]) -> str:
     out: list[str] = []
     conn = s.get("connection") or {}
     if conn.get("connected"):
         fw = f", firmware {conn['firmware']}" if conn.get("firmware") else ""
         out.append(f"Connected to {conn.get('port') or '?'} ({conn.get('driver') or '?'}{fw}).")
+        age = report_age(s)
+        if age is not None and age >= STALE_REPORT_S:
+            out.append(silent_text(age))
     else:
         out.append("UGS is not connected to the controller.")
     c = s.get("controller")

@@ -66,11 +66,17 @@ public final class ApiHost implements AutoCloseable {
      */
     public ApiHost(Path home, SessionLog log, Authority authority, MachineLink link, OperatorPrompts prompts,
                    Supplier<Notifier> notifier) {
+        this(home, log, authority, link, prompts, notifier, System::currentTimeMillis);
+    }
+
+    /** @param millis wall clock for the status-report age (tests pass a fake one) */
+    ApiHost(Path home, SessionLog log, Authority authority, MachineLink link, OperatorPrompts prompts,
+            Supplier<Notifier> notifier, java.util.function.LongSupplier millis) {
         this.home = home;
         this.log = log;
         this.link = link;
         this.authority = authority;
-        this.state = new StateTracker();
+        this.state = new StateTracker(millis);
         this.mcpToken = Discovery.newToken();
         String viewerToken = Discovery.newToken();
         this.commands = new CommandService(log, link, authority, prompts, this::queryStatus);
@@ -116,6 +122,7 @@ public final class ApiHost implements AutoCloseable {
         api.setPort(port);
         Discovery.write(home, port, mcpToken, BridgeApi.BASE);
         timer.scheduleAtFixedRate(authority::checkExpiry, 5, 5, TimeUnit.SECONDS);
+        timer.scheduleAtFixedRate(this::checkSilence, 2, 2, TimeUnit.SECONDS);
         LOGGER.info(() -> "ugs-bridge API on http://127.0.0.1:" + port + BridgeApi.BASE + " (viewer "
                 + (StaticFiles.available() ? "packaged" : "missing") + ")");
     }
@@ -129,6 +136,37 @@ public final class ApiHost implements AutoCloseable {
         api.closeAll();
         server.close();
         Discovery.remove(home);
+    }
+
+    /** Seconds without a status report (while connected) before a {@code controller_silent} event is logged. */
+    static final double SILENT_EVENT_S = 10.0;
+    private boolean silentLogged;
+
+    /**
+     * Watchdog (every 2 s): a connected controller that stops reporting (USB or EMI freeze; UGS keeps showing it
+     * connected) gets one {@code event} record {@code controller_silent}, which the notifier sends as
+     * {@code connection_lost}; {@code controller_responding} follows when reports resume.
+     */
+    void checkSilence() {
+        try {
+            double age = state.reportAgeSeconds();
+            if (age >= SILENT_EVENT_S && !silentLogged) {
+                silentLogged = true;
+                com.google.gson.JsonObject d = new com.google.gson.JsonObject();
+                d.addProperty("type", "controller_silent");
+                d.addProperty("age_s", Math.round(age * 10) / 10.0);
+                log.append(com.willwinder.ugs.nbp.bridge.log.LogRecord.Kind.EVENT, "bridge", d);
+            } else if (silentLogged && age >= 0 && age < StateTracker.SILENT_AFTER_MS / 1000.0) {
+                silentLogged = false;
+                com.google.gson.JsonObject d = new com.google.gson.JsonObject();
+                d.addProperty("type", "controller_responding");
+                log.append(com.willwinder.ugs.nbp.bridge.log.LogRecord.Kind.EVENT, "bridge", d);
+            } else if (age < 0) {
+                silentLogged = false;
+            }
+        } catch (RuntimeException e) {
+            LOGGER.log(java.util.logging.Level.WARNING, "silence check failed", e);
+        }
     }
 
     /** Answers the {@code ?} line: asks for a status report and waits for it (up to 1.5 s). */

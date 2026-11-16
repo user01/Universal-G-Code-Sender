@@ -101,3 +101,10 @@ Breaking changes bump `/v1`. Additive fields are allowed at any time; clients mu
   - `GET /log` / `/console` add `truncated: true, oldest_seq` when `since` is older than the in-memory ring; `WS /events` closes with 1013 if a client falls 100 000 records behind.
   - `GET /file/content` adds headers `X-Bridge-File` and `X-Bridge-SHA256`.
 - **Operation addressing:** names can repeat within a file, so `{operation: …}` also accepts the 1-based operation number (`5` or `"OP 05"`).
+
+## Additions after the first machine session (2026-11-16)
+
+- **`controller_report` in `GET /status`:** `{seq, at, age_s, silent}` for the last controller status report, or `null` when not connected or before the first report. UGS polls about 5 times a second and the log writes a heartbeat every second, so a healthy controller keeps `age_s` near or below 1. On the machine the controller once froze (USB/EMI) while UGS still showed it connected, and `controller` kept saying Idle for minutes; `silent` is true from 5 s. `controller` is always the *last report*, never a guess of the present state.
+- **`controller_silent` / `controller_responding` events:** the bridge checks every 2 s; after 10 s without a report while connected it logs `event {type: "controller_silent", age_s}` once (notified under the `connection_lost` trigger), and `controller_responding` when reports resume.
+- **Clients waiting for motion:** a line's `ok` means "queued in GRBL's planner", not "done", and `GET /status` right after it can still show the state from before the motion. The MCP tools end every motion call with `G4 P0` (GRBL answers it only when the planner is empty) and then wait for a status report younger than that `ok` (`now − age_s` later than the moment the result arrived). Jogs get no `G4 P0` (GRBL answers G-code during a jog with error:9); their completion is the first fresh Idle report.
+- **Motion is refused while the controller is silent** (`controller_report.age_s` ≥ 5): the position can't be trusted.

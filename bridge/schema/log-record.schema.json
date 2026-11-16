@@ -421,7 +421,9 @@
             "file_state",
             "probe",
             "setting",
-            "interceptor"
+            "interceptor",
+            "controller_silent",
+            "controller_responding"
           ]
         }
       },

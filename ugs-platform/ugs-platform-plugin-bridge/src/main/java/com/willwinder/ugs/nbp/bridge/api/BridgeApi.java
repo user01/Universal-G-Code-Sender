@@ -362,6 +362,7 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
         d.state().fillStatus(tmp);
         s.add("connection", tmp.get("connection"));
         s.add("controller", tmp.get("controller"));
+        s.add("controller_report", tmp.get("controller_report"));
         s.add("homed_this_connection", tmp.get("homed_this_connection"));
         s.add("alarm", tmp.get("alarm"));
         Authority.Snapshot a = d.authority().snapshot();

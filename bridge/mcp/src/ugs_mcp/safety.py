@@ -354,6 +354,10 @@ def _vec(v: Any) -> Vec3 | None:
     return (float(v[0]), float(v[1]), float(v[2]))
 
 
+STALE_REPORT_S = 5.0
+"""No controller status report for this long while connected: the controller is silent."""
+
+
 @dataclass(slots=True)
 class Machine:
     """The bridge's view of the machine when the call starts (from ``GET /status``)."""
@@ -369,6 +373,8 @@ class Machine:
     alarm: str | None = None
     stream: str = "idle"
     interceptor: str | None = None
+    report_age_s: float | None = None
+    """Seconds since the last controller status report (None: the bridge doesn't say)."""
 
     @classmethod
     def from_status(cls, st: Mapping[str, Any]) -> Machine:
@@ -378,6 +384,8 @@ class Machine:
         alarm = st.get("alarm")
         pins = ctrl.get("pins")
         icp = st.get("interceptor")
+        rep = st.get("controller_report")
+        age = rep.get("age_s") if isinstance(rep, dict) else None
         return cls(
             connected=bool(conn.get("connected")),
             locked=bool(auth.get("locked")),
@@ -394,6 +402,7 @@ class Machine:
             ),
             stream=str((st.get("stream") or {}).get("state") or "idle"),
             interceptor=str(icp.get("state") or "active") if isinstance(icp, dict) else None,
+            report_age_s=None if age is None else float(age),
         )
 
 
@@ -663,6 +672,14 @@ def _machine_rules(check: Check, m: Machine, limits: Limits) -> None:
         )
     if needs_motion and not m.connected:
         check.refuse("connection", "UGS is not connected to the controller.")
+        return
+    if needs_motion and m.report_age_s is not None and m.report_age_s >= STALE_REPORT_S:
+        check.refuse(
+            "connection",
+            f"no status report from the controller for {m.report_age_s:.0f} s: it may be frozen"
+            " or disconnected, and its position can't be trusted. The operator should check the"
+            " controller and USB, reconnect in UGS and home.",
+        )
         return
     if check.confirm or not (check.moves_machine or check.sets_offset):
         return  # $H / $X are allowed in alarm (the operator confirms); modal-only lines too

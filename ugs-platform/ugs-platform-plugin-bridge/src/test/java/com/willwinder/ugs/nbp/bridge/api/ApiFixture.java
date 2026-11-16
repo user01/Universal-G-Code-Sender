@@ -50,6 +50,8 @@ final class ApiFixture implements AutoCloseable {
     final SessionLog log;
     final BridgeLock lock = new BridgeLock();
     final TestClock clock = new TestClock();
+    /** Wall clock for the status-report age ({@code controller_report}). */
+    final java.util.concurrent.atomic.AtomicLong millis = new java.util.concurrent.atomic.AtomicLong(1_800_000_000_000L);
     final Authority authority;
     final FakeLink link;
     final Prompts prompts = new Prompts();
@@ -70,7 +72,7 @@ final class ApiFixture implements AutoCloseable {
         authority.logStart();
         link = new FakeLink(log);
         Notifier n = withNotifier ? (t, text, level) -> notified.add(new String[]{t, text, level}) : BridgeApi.NO_NOTIFIER;
-        host = new ApiHost(home, log, authority, link, prompts, () -> n);
+        host = new ApiHost(home, log, authority, link, prompts, () -> n, millis::get);
         host.start(0, 0);
         token = Files.readString(home.resolve("token")).strip();
         link.connect();

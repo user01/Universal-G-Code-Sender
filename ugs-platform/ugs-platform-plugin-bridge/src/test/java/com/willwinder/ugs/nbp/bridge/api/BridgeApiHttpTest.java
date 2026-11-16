@@ -78,6 +78,46 @@ public class BridgeApiHttpTest {
                 .map(r -> JsonParser.parseString(r.json()).getAsJsonObject()).toList();
     }
 
+    // ------------------------------------------------------------------ controller report age
+
+    @Test
+    public void statusReportsTheAgeOfTheLastControllerReportAndASilentController() throws Exception {
+        f.link.status();
+        JsonObject r = ApiFixture.json(f.get("/status")).getAsJsonObject("controller_report");
+        assertEquals(0.0, r.get("age_s").getAsDouble(), 1e-9);
+        assertFalse(r.get("silent").getAsBoolean());
+        assertTrue(r.get("seq").getAsLong() > 0);
+
+        f.millis.addAndGet(6_000); // the controller freezes: UGS still shows it connected
+        r = ApiFixture.json(f.get("/status")).getAsJsonObject("controller_report");
+        assertEquals(6.0, r.get("age_s").getAsDouble(), 1e-9);
+        assertTrue(r.get("silent").getAsBoolean());
+        f.host.checkSilence();
+        assertTrue("no event before 10 s", records("event").stream()
+                .noneMatch(e -> e.getAsJsonObject("data").get("type").getAsString().equals("controller_silent")));
+
+        f.millis.addAndGet(5_000);
+        f.host.checkSilence();
+        f.host.checkSilence(); // logged once
+        List<JsonObject> silent = records("event").stream()
+                .filter(e -> e.getAsJsonObject("data").get("type").getAsString().equals("controller_silent")).toList();
+        assertEquals(1, silent.size());
+        assertEquals(11.0, silent.get(0).getAsJsonObject("data").get("age_s").getAsDouble(), 1e-9);
+
+        f.link.status(); // reports resume
+        f.host.checkSilence();
+        assertTrue(records("event").stream()
+                .anyMatch(e -> e.getAsJsonObject("data").get("type").getAsString().equals("controller_responding")));
+        assertFalse(ApiFixture.json(f.get("/status")).getAsJsonObject("controller_report").get("silent").getAsBoolean());
+    }
+
+    @Test
+    public void noControllerReportWhenDisconnected() throws Exception {
+        f.link.status();
+        f.link.disconnect();
+        assertTrue(ApiFixture.json(f.get("/status")).get("controller_report").isJsonNull());
+    }
+
     // ------------------------------------------------------------------ access control
 
     @Test

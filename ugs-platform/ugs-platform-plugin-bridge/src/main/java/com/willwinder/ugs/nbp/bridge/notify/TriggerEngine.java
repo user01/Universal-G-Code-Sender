@@ -197,6 +197,9 @@ final class TriggerEngine {
                 }
             }
             case "interceptor" -> onInterceptor(d, out);
+            case "controller_silent" -> out.add(new Notification(Triggers.CONNECTION_LOST,
+                    Messages.controllerSilent(port, d.has("age_s") ? d.get("age_s").getAsDouble() : 0,
+                            streaming ? fileName() : null, lastFileLine), Triggers.ALERT));
             default -> {
             }
         }

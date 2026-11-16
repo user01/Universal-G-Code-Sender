@@ -1,9 +1,9 @@
 """Motion tool round-trips: MCP client -> ugs-mcp -> HTTP -> fake bridge -> ShapeokoGrbl.
 
 The simulator (``bridge/sim``, ``ugs_sim.machine.ShapeokoGrbl``) models the BitSetter and the
-BitZero from the machine profile: plate thickness from the profile (ledger B1), default tool 40 mm, stock
-top at tool-tip Z -95.6, BitSetter top at tip Z -105 at X-4.2 Y-448.2. Time runs instantly
-(``time_scale=inf``) except where a test needs motion in progress.
+BitZero from the machine profile: plate thickness from the profile (ledger B1), default tool
+40 mm, stock top at tool-tip Z -95.6, BitSetter top at tip Z -105 at X-4.2 Y-448.2. Time runs
+instantly (``time_scale=inf``) except where a test needs motion in progress.
 """
 
 from __future__ import annotations
@@ -184,11 +184,15 @@ async def test_bitzero_z_probe_flow(sim_fake: FakeBridge, home: Path) -> None:
 
     assert _claude_motion_tx(sim_fake) == [
         "G21G90G94G53G0X-300Y-370Z-5",
+        "G4P0",  # every motion call ends with G4 P0: its ok means the motion has finished
         "G21G90G94G53G0Z-35",
+        "G4P0",
         "G21G91G38.2Z-25F100",
         "G0Z2",
         "G90",
+        "G4P0",
         "G21G10L2P1Z-55.6",
+        "G4P0",
     ]
     expects = {
         r["data"]["expect"]
@@ -303,6 +307,51 @@ async def test_error_mid_call_restores_g90(
         validate("log-record", rec)
 
 
+@pytest.fixture
+def realistic_fake(home: Path) -> Iterator[FakeBridge]:
+    """Like the real bridge: status is the last report, refreshed every 0.4 s; real-time moves."""
+    sim = ShapeokoGrbl(load_profile(), time_scale=4.0)
+    with FakeBridge(home, sim=sim, status_interval_s=0.4) as bridge:
+        yield bridge
+
+
+async def test_motion_results_report_the_position_after_the_move(
+    realistic_fake: FakeBridge, home: Path
+) -> None:
+    """Seen live 2026-11-16: move/probe returned 'Idle' and the position from before the move,
+    because the last status report predated the motion. The result must be final."""
+    _armed_and_homed(realistic_fake)
+    async with _client(home) as client:
+        text, err = await _call(client, "move", {"z": -40, "expect": "down 39 mm"})
+        assert not err, text
+        assert "Now: Idle, MPos X-1 Y-1 Z-40" in text, text
+        assert "may be stale" not in text
+        text, err = await _call(
+            client, "move", {"x": -60, "y": -80, "z": -40, "feed": 3000, "expect": "over"}
+        )
+        assert not err, text
+        assert "Now: Idle, MPos X-60 Y-80 Z-40" in text, text
+        text, err = await _call(client, "jog", {"axis": "X", "distance": -30, "feed": 3000})
+        assert not err, text
+        assert "MPos X-90 Y-80 Z-40" in text, text
+
+
+async def test_silent_controller_is_reported_and_blocks_motion(
+    sim_fake: FakeBridge, home: Path
+) -> None:
+    """Seen live 2026-11-16: the controller froze (USB/EMI) and status kept saying Idle."""
+    _armed_and_homed(sim_fake)
+    sim_fake.freeze_controller(312)
+    async with _client(home) as client:
+        text, err = await _call(client, "status")
+        assert not err, text
+        assert "NO STATUS FROM CONTROLLER for 312 s" in text
+        text, err = await _call(client, "move", {"z": -10, "expect": "down"})
+        assert err
+        assert "no status report from the controller for 312 s" in text
+    assert not [x for x in _claude_motion_tx(sim_fake) if "Z-10" in x]
+
+
 async def test_jog_and_send(sim_fake: FakeBridge, home: Path) -> None:
     _armed_and_homed(sim_fake)
     async with _client(home) as client:
@@ -320,7 +369,13 @@ async def test_jog_and_send(sim_fake: FakeBridge, home: Path) -> None:
         # D21: Claude may switch the router off
         text, err = await _call(client, "send", {"lines": ["M5"], "expect": "router stops"})
         assert not err, text
-        assert _claude_motion_tx(sim_fake)[-1] == "M5"
+        assert _claude_motion_tx(sim_fake)[-2:] == ["M5", "G4P0"]
+        # no G4 P0 after a jog: GRBL refuses G-code while jogging (error:9)
+        assert "$J=G21G91X-20F2000" in _claude_motion_tx(sim_fake)
+        assert (
+            _claude_motion_tx(sim_fake)[_claude_motion_tx(sim_fake).index("$J=G21G91X-20F2000") + 1]
+            != "G4P0"
+        )
 
 
 async def test_hold_resume_reset(sim_fake: FakeBridge, home: Path) -> None:

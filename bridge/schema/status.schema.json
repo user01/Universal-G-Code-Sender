@@ -234,6 +234,44 @@
             }
           ]
         },
+        "controller_report": {
+          "description": "When the last controller status report arrived (while connected). UGS polls about 5 times a second and the log writes a heartbeat every second, so a healthy controller keeps age_s near or below 1. A large age_s means the controller has stopped answering (USB/EMI freeze) although UGS still shows it connected; `controller` then holds the last report, not the present state. Null when not connected or before the first report.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "description": "log seq of the status record"
+                },
+                "at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "its timestamp"
+                },
+                "age_s": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "seconds since it arrived"
+                },
+                "silent": {
+                  "type": "boolean",
+                  "description": "age_s >= 5"
+                }
+              },
+              "required": [
+                "seq",
+                "age_s"
+              ],
+              "additionalProperties": true
+            }
+          ]
+        },
         "homed_this_connection": {
           "type": "boolean"
         },

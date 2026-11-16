@@ -134,7 +134,11 @@ class FakeBridge:
         viewer_dir: Path | None = None,
         cors_origins: list[str] | None = None,
         port: int = 0,
+        status_interval_s: float = 0.0,
     ) -> None:
+        """``status_interval_s`` > 0 makes ``GET /status`` behave like the real bridge: it
+        returns the last report and asks the controller for a new one at most that often (UGS
+        polls on a timer), so a status read right after an ``ok`` can predate the motion."""
         self.home = Path(home)
         self.token = token
         self.locked = locked
@@ -170,6 +174,11 @@ class FakeBridge:
         ] = []
         self._last_status: tuple[Any, ...] | None = None
         self._last_ctrl: dict[str, Any] | None = None
+        self._ctrl_at: float | None = None
+        self._ctrl_seq = 0
+        self.status_interval_s = status_interval_s
+        self.silent = False
+        """True simulates a frozen controller: no status reports arrive (UGS stays connected)."""
         self._wco = (0.0, 0.0, 0.0)
         self._inflight: _Inflight | None = None
         self._jobs: queue.Queue[_Job | None] = queue.Queue()
@@ -281,6 +290,13 @@ class FakeBridge:
                 "operator",
                 {"locked": locked, "level": self.level.value, "by": "operator"},
             )
+
+    def freeze_controller(self, for_s: float) -> None:
+        """Simulate a controller that stopped answering ``for_s`` seconds ago (USB/EMI freeze):
+        no more status reports, UGS still shows it connected."""
+        with self._lock:
+            self.silent = True
+            self._ctrl_at = time.monotonic() - for_s
 
     def set_level(self, level: str) -> None:
         with self._lock:
@@ -442,7 +458,7 @@ class FakeBridge:
             )
 
     def _poll_status(self) -> dict[str, Any] | None:
-        if not self.connected:
+        if not self.connected or self.silent:
             return None
         self.sim.write(b"?")
         deadline = time.monotonic() + 1.0
@@ -470,6 +486,8 @@ class FakeBridge:
             self._last_status = key
             self.emit("status", "ugs", status)
         self._last_ctrl = status
+        self._ctrl_at = time.monotonic()
+        self._ctrl_seq = self._seq
         return status
 
     def _controller_status(self, rep: StatusReport, raw: str) -> dict[str, Any]:
@@ -840,9 +858,22 @@ class FakeBridge:
             )
         return Starlette(routes=routes, middleware=middleware)
 
+    def _report(self) -> dict[str, Any] | None:
+        if not self.connected or self._ctrl_at is None:
+            return None
+        age = round(time.monotonic() - self._ctrl_at, 3)
+        return {"seq": self._ctrl_seq, "at": None, "age_s": age, "silent": age >= 5.0}
+
     def bridge_status(self) -> dict[str, Any]:
         with self._lock:
-            ctrl = self._poll_status()
+            due = (
+                self.status_interval_s <= 0
+                or self._ctrl_at is None
+                or time.monotonic() - self._ctrl_at >= self.status_interval_s
+            )
+            ctrl = self._poll_status() if due else None
+            if ctrl is None and self.connected:
+                ctrl = self._last_ctrl
             alarm = None
             if self.last_alarm is not None and ctrl and ctrl["state"] == "Alarm":
                 alarm = {"code": self.last_alarm, "text": ALARMS.get(self.last_alarm, "")}
@@ -865,6 +896,7 @@ class FakeBridge:
                     "session": self.session if self.connected else None,
                 },
                 "controller": ctrl,
+                "controller_report": self._report(),
                 "homed_this_connection": self.homed,
                 "alarm": alarm,
                 "authority": {

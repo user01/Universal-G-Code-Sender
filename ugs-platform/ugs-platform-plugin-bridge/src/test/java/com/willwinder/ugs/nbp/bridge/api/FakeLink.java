@@ -65,6 +65,14 @@ final class FakeLink implements MachineLink {
         status();
     }
 
+    void disconnect() {
+        JsonObject d = new JsonObject();
+        d.addProperty("event", "disconnect");
+        d.addProperty("ugs_version", "test");
+        d.addProperty("bridge_version", "test");
+        log.append(LogRecord.Kind.SESSION, LogRecord.Src.OPERATOR, d);
+    }
+
     void status() {
         JsonObject st = new JsonObject();
         st.addProperty("state", state);

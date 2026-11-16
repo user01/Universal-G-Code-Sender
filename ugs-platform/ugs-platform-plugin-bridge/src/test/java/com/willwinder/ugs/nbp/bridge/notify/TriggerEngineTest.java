@@ -246,6 +246,17 @@ public class TriggerEngineTest {
     }
 
     @Test
+    public void silentControllerIsAConnectionLostAlert() {
+        feed("session", 1, "{\"event\":\"connect\",\"port\":\"cu.usbmodem11201\"}");
+        TriggerEngine.Notification n = one(feed("event", 2, "{\"type\":\"controller_silent\",\"age_s\":10.4}"));
+        assertEquals(Triggers.CONNECTION_LOST, n.trigger());
+        assertEquals(Triggers.ALERT, n.level());
+        assertEquals("🔇 The controller stopped answering (cu.usbmodem11201): no status for 10 s, it may be frozen"
+                + " or disconnected", n.text());
+        assertTrue(feed("event", 3, "{\"type\":\"controller_responding\"}").isEmpty());
+    }
+
+    @Test
     public void progressEveryNPercentOnlyWhenConfigured() {
         startStream("/x/a.nc", 1000, 0);
         for (int i = 1; i <= 1000; i++) {

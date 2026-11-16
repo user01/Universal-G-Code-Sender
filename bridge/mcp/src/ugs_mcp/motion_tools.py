@@ -24,17 +24,20 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from ugs_mcp.bridge_client import TERMINAL_COMMAND_STATES, BridgeClient, BridgeError
-from ugs_mcp.describe import ALARMS, ERRORS, pins_words
+from ugs_mcp.describe import ALARMS, ERRORS, pins_words, report_age
 from ugs_mcp.gcode.analyze import analyze_path
 from ugs_mcp.safety import (
     Check,
     Level,
     Limits,
+    LineClass,
     Machine,
     Modal,
     check_motion,
+    classify_line,
     fmt_num,
     level_allows,
+    normalize,
 )
 
 ProfileGetter = Callable[[], Awaitable[tuple[dict[str, Any] | None, str | None]]]
@@ -116,14 +119,31 @@ class Motion:
                 return res
             await anyio.sleep(0.03)
 
-    async def wait_idle(self, timeout: float) -> dict[str, Any]:
+    async def wait_idle(
+        self, timeout: float, *, after: float | None = None
+    ) -> tuple[dict[str, Any], bool]:
+        """Wait for Idle (or Alarm/Door) in a status report that arrived after ``after``.
+
+        ``after`` is an ``anyio.current_time()`` value. The bridge's status is the last report
+        UGS received, so right after an ``ok`` it can still show the state from before the
+        motion; only a report younger than the ``ok`` counts. Returns (status, fresh): fresh is
+        False when no such report arrived within ``timeout`` (or the bridge has no report age).
+        """
         deadline = anyio.current_time() + timeout
         while True:
+            asked = anyio.current_time()
             st = await _guard(self.bridge.status())
             ctrl = st.get("controller") or {}
-            if ctrl.get("state") in ("Idle", "Alarm", "Door") or anyio.current_time() >= deadline:
-                return st
-            await anyio.sleep(0.03)
+            age = report_age(st)
+            fresh = after is None or (age is not None and asked - age > after)
+            if age is None and after is not None:
+                fresh = False  # an older bridge: fall back to the state alone
+            settled = ctrl.get("state") in ("Idle", "Alarm", "Door")
+            if settled and (fresh or age is None):
+                return st, fresh
+            if anyio.current_time() >= deadline:
+                return st, fresh
+            await anyio.sleep(0.05)
 
     async def run(
         self,
@@ -137,9 +157,8 @@ class Motion:
         """Send checked lines; return (command result, final status, notes)."""
         est = check.estimate_s(limits.feed_max)
         timeout = timeout_s or min(600.0, 20.0 + 1.5 * est)
-        acc = await _guard(
-            self.bridge.command(check.lines, tag=tag, expect=expect, timeout_s=timeout)
-        )
+        lines = with_sync(check.lines)
+        acc = await _guard(self.bridge.command(lines, tag=tag, expect=expect, timeout_s=timeout))
         cid = str(acc["id"])
         res = await self.wait_result(cid, timeout)
         notes: list[str] = []
@@ -151,7 +170,13 @@ class Motion:
                 f"Command {cid} is still {res.get('state')} after {timeout:.0f} s; check status"
                 " and console."
             )
-        st = await self.wait_idle(timeout)
+        done_at = anyio.current_time()
+        st, fresh = await self.wait_idle(timeout, after=done_at)
+        if not fresh and report_age(st) is not None:
+            notes.append(
+                "No status report arrived after the command finished: the position below is the"
+                " last one reported and may be stale. Check status before the next move."
+            )
         if res.get("state") in ("failed", "dropped"):
             notes.extend(await self.recover(check, res, st))
             st = await _guard(self.bridge.status())
@@ -166,7 +191,7 @@ class Motion:
         bad = next((ln for ln in lines if ln.get("state") not in ("ok",)), None)
         if bad is None:
             return []
-        idx = int(bad.get("index", 0)) + 1
+        idx = min(int(bad.get("index", 0)) + 1, len(check.lines))  # the appended G4 P0
         modal = check.modal_after[idx - 1] if bad.get("state") == "alarm" else None
         if modal is None:
             modal = check.modal_before(idx)
@@ -191,6 +216,23 @@ class Motion:
         if r2.get("state") == "done":
             return [f"The failure left {left} active; I sent '{RESTORE_LINE}' to restore it."]
         return [f"The failure left {left} active; '{RESTORE_LINE}' did not complete."]
+
+
+SYNC_LINE = "G4 P0"
+"""Appended to motion: GRBL answers it only once the planner is empty, so its ``ok`` means the
+motion has finished (a plain ``ok`` only means "queued")."""
+
+
+def with_sync(lines: Sequence[str]) -> list[str]:
+    """``lines`` plus ``G4 P0`` when they move the machine. Not after jogs: GRBL refuses G-code
+    while jogging (error:9); jog completion comes from a fresh Idle report instead."""
+    out = [str(x) for x in lines]
+    if any(normalize(x).startswith("$J=") for x in out):
+        return out
+    moves = any(normalize(x) and classify_line(x).cls is LineClass.MOTION for x in out)
+    if moves and normalize(out[-1]) != normalize(SYNC_LINE):
+        out.append(SYNC_LINE)
+    return out
 
 
 def lines_text(res: dict[str, Any]) -> list[str]:
