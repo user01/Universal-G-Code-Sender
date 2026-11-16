@@ -261,6 +261,32 @@ class BridgeClient:
     async def realtime(self, op: str) -> Any:
         return await self.post("/realtime", {"op": op})
 
+    async def origins(self) -> dict[str, Any]:
+        return dict(await self.get("/origins"))
+
+    async def apply_origin(self, origin_id: str) -> dict[str, Any]:
+        return dict(await self.post("/origins/apply", {"origin_id": origin_id}))
+
+    async def job_state(self) -> dict[str, Any] | None:
+        try:
+            return dict(await self.get("/job/state"))
+        except BridgeError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    async def resume_plan(self, target: dict[str, Any]) -> dict[str, Any]:
+        return dict(await self.post("/job/resume/plan", {"target": target}))
+
+    async def resume(self, plan_id: str) -> dict[str, Any]:
+        return dict(await self.post("/job/resume", {"plan_id": plan_id}))
+
+    async def file_load(self, path: str) -> dict[str, Any]:
+        return dict(await self.post("/file/load", {"path": path}))
+
+    async def file_run(self) -> dict[str, Any]:
+        return dict(await self.post("/file/run", {}))
+
     # Events -------------------------------------------------------------------------------
 
     async def events(
