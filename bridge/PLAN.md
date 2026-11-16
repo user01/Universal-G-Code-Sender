@@ -130,7 +130,30 @@ HTML review reports for W0 and W1 (private artifacts): index https://claude.ai/a
 - The simulator has no deceleration, so `Hold:1` lasts one report. Reset-after-hold tests are optimistic.
 - dr_ryan streams through UGS core against the simulator in 200 s at time-scale 20 (311-line default: 57 s).
 
-### Follow-ups queued for W2
+## W2 status (2026-11-15): all seven packages merged (33e18810)
+
+| Pkg | Result | Report |
+|---|---|---|
+| A2 | cmd_id drift fixed (62/85 → 0), D16 echoes dropped, real-time bytes logged; core P3–P6; opt-in `UgsSimIntegrationTest` | https://claude.ai/artifact/3DHLBb7GzdUJ2LhS2394tw |
+| E+F | JDK-only HTTP/WS server on 127.0.0.1, 21 endpoints (`/job/resume` 501), padlock toolbar + menu + Cmd/Ctrl+Shift+L, authority levels with expiry, `$H`/`$X`/file-run dialogs, P1 `[claude]` console label; verified in the dev GUI against the sim | https://claude.ai/artifact/58kTEWeogtzvMY2hZp8MW8 |
+| G | Telegram/Slack notifier, triggers, rate limit, settings panel class (not yet placed) | https://claude.ai/artifact/VwPh84pMrFxyYmAS47VHT6 |
+| H | 14 MCP motion/job tools behind the §5.2 checker (126 cases) | https://claude.ai/artifact/QrZ5BpYth5FfMQ7NzZbiPR |
+| J | `runtime`: origins tracking, journal, BitSetter tool-change interceptor (D10 return), P7; sim IT shows WCO_z +12.500 for a +12.5 mm tool | https://claude.ai/artifact/1NHBxoXbMeMUUFfK9E2pwd |
+| S | sim BitZero V2 XY/XYZ probing (placeholder bore), probe-away, feed-hold decel | https://claude.ai/artifact/VmWcGbPLPccpKAvxw9UVFG |
+| V | viewer D11 fix + live mode (fake-bridge verified) | https://claude.ai/artifact/XddidMqMr6jq6JykYeCxA2 |
+
+Totals after integration: ugs-core 951, bridge module 240 (+ both sim ITs), Python 274, viewer 51, all passing.
+
+### W3 integration queue
+- Wire `JobRuntime` into the API: `/origins`, `/origins/apply`, `/job/state` (live journal), `/job/resume` (replace 501, operator dialog, preamble + stream from line).
+- Place `NotifySettingsPanel` and the "BitSetter tool changes" option in the Claude panel layout; the status-bar lock mirror.
+- Capture `file_line` off by one (getCommandNumber is already 1-based).
+- Decide: resume UGS's paused queue after a failed Claude line; synthesize `/status.alarm` for the DTR-reset alarm; `?vt=` token form (raw vs `v.`); `GET /file/sidecar`; dev CORS.
+- Job setup checklist panel (J4) and resume dialog with the viewer showing the plan.
+- Live viewer against the real plugin API (`Open 3D view`).
+- Real machine: ledger A–D once connected.
+
+### Follow-ups queued for W2 (kept for history)
 - V-1 viewer: tool-change block outside operations (D11); live source with `GET /file/content` + `?vt=` WebSocket auth.
 - S-1 sim: XY probing (`G38.x` with X/Y) for BitZero corner tests. ~~Promote the Java compatibility harness into a JUnit integration test~~: done in W2 A2 (`UgsSimIntegrationTest`, opt-in with `-Dugs.bridge.it=true` or `UGS_SIM_IT=1`).
 - J-1 job: BitZero XYZ-corner sequence; the envelope Z check uses the post-measurement WCO.
