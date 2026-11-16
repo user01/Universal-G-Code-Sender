@@ -276,10 +276,9 @@ async def test_probe_miss_resets_modal_and_disarms(sim_fake: FakeBridge, home: P
 async def test_error_mid_call_restores_g90(
     home: Path, validate: Callable[[str, Any], None]
 ) -> None:
-    # A profile that knows the bore lets an X probe through the checker; the simulator models
-    # Z probing only and answers error:20, after the G91 line ran.
+    # G20 followed by G21 passes the checker (the call doesn't end in inches), but the simulator
+    # doesn't model inch mode and answers error:20 after the G91 line ran.
     prof = json.loads(json.dumps(local_profile()[0]))
-    prof["bitzero"]["bore_diameter"] = 22.0
     with FakeBridge(home, sim=_sim(), profile=prof) as fake:
         _armed_and_homed(fake)
         async with _client(home) as client:
@@ -288,7 +287,7 @@ async def test_error_mid_call_restores_g90(
             text, err = await _call(
                 client,
                 "send",
-                {"lines": ["G91 G0 Z1", "G38.2 X-5 F100", "G90"], "expect": "x probe"},
+                {"lines": ["G91 G0 Z1", "G20", "G21", "G90"], "expect": "inch round trip"},
             )
             assert not err, text
             assert "error:20" in text
