@@ -24,6 +24,7 @@ import com.willwinder.ugs.nbp.bridge.capture.CommandOrigins;
 import com.willwinder.ugs.nbp.bridge.log.BridgeHome;
 import com.willwinder.ugs.nbp.bridge.log.LogRecord;
 import com.willwinder.ugs.nbp.bridge.log.SessionLog;
+import com.willwinder.ugs.nbp.bridge.notify.BridgeNotifier;
 import com.willwinder.universalgcodesender.model.BackendAPI;
 import com.willwinder.universalgcodesender.services.LookupService;
 import org.openide.modules.OnStart;
@@ -43,6 +44,7 @@ public final class BridgeService implements Runnable {
     private static final CommandOrigins ORIGINS = new CommandOrigins();
     private static volatile SessionLog sessionLog;
     private static volatile Capture capture;
+    private static volatile BridgeNotifier notifier;
 
     public static BridgeLock lock() {
         return LOCK;
@@ -56,6 +58,11 @@ public final class BridgeService implements Runnable {
     /** The capture, or null if the bridge failed to start. */
     public static Capture capture() {
         return capture;
+    }
+
+    /** Telegram/Slack notifier (also the {@code Notifier} for the API), or null if the bridge failed to start. */
+    public static BridgeNotifier notifier() {
+        return notifier;
     }
 
     public static CommandOrigins origins() {
@@ -94,6 +101,7 @@ public final class BridgeService implements Runnable {
         log.append(LogRecord.Kind.AUTHORITY, LogRecord.Src.BRIDGE,
                 authorityData(LOCK.getState(), "bridge started (always locked at launch)", LogRecord.Src.BRIDGE));
         LOCK.addListener(LOCK_LOGGER);
+        notifier = BridgeNotifier.start(log);
 
         if (backend != null) {
             c.attach(backend);
@@ -110,6 +118,10 @@ public final class BridgeService implements Runnable {
             return;
         }
         LOCK.removeListener(LOCK_LOGGER);
+        if (notifier != null) {
+            notifier.close();
+            notifier = null;
+        }
         if (c != null) {
             c.detach();
             log.append(LogRecord.Kind.SESSION, LogRecord.Src.BRIDGE, c.sessionData("bridge_stop"));
