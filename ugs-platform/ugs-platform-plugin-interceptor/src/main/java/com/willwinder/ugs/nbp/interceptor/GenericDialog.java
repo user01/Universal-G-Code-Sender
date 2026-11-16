@@ -154,6 +154,11 @@ class GenericDialog implements InterceptorDialog {
         boolean promptText = waitingForUser && prompt != null;
         headerLabel.setText(promptText && prompt.title() != null ? prompt.title() : headerFor(interceptorState));
         messageLabel.setText(bodyHtml(promptText && prompt.message() != null ? prompt.message() : bodyFor(interceptorState)));
+        if (promptText) {
+            // the dialog was sized for the short "please wait" text; make room for the prompt's message
+            dialog.pack();
+            dialog.setLocationRelativeTo(WindowManager.getDefault().getMainWindow());
+        }
         progressBar.setVisible(busy);
 
         continueButton.setVisible(waitingForUser);
