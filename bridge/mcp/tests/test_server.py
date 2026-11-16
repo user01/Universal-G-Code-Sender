@@ -137,10 +137,12 @@ async def test_observe_and_query_round_trip(fake: FakeBridge, home: Path) -> Non
 async def test_lock_gives_plain_message(fake: FakeBridge, home: Path) -> None:
     fake.set_locked(True)
     async with Client(build_server(BridgeClient(home))) as client:
+        for tool in ("status", "console", "settings"):  # reads work while locked
+            text, err = await _call(client, tool, {})
+            assert not err, (tool, text)
+        text, _ = await _call(client, "status", {})
+        assert "LOCKED" in text
         for tool, args in [
-            ("status", {}),
-            ("console", {}),
-            ("settings", {}),
             ("query", {"cmd": "$$"}),
             ("notify", {"text": "hi"}),
         ]:

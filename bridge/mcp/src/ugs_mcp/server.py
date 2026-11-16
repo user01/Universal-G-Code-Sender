@@ -47,9 +47,10 @@ PAGE = 2000
 
 INSTRUCTIONS = """\
 Tools for a Shapeoko 4 (GRBL 1.1) run by Universal Gcode Sender with the ugs-bridge plugin.
-The operator controls what you may do from the UGS bridge panel: when UGS access is locked you
-get nothing; Observe/Query let you read status, logs and settings and send ?, $$, $#, $G, $I,
-$N. Motion and streaming need the operator to arm them (ask with request_authority).
+The operator controls what you may do from the UGS bridge panel. You can always read status,
+console, logs, settings and the loaded file, even while UGS access is locked; the lock refuses
+every action (sends, motion, hold/reset, notify). Unlocked, Query lets you also send ?, $$, $#,
+$G, $I, $N. Motion and streaming need the operator to arm them (ask with request_authority).
 Motion tools (move, jog, probe, send, set_work_offset, apply_origin) check every line before
 sending: the machine must be homed and Idle, targets inside the profile envelope (machine
 coordinates), probes relative and at most 25 mm with the probe input clear, and the call must

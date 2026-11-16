@@ -207,7 +207,7 @@ public final class AuthorityPanel extends JPanel {
             updating = false;
         }
         if (s.locked()) {
-            stateLabel.setText("<html><span style='color:#C0392B'><b>Locked</b></span>: Claude gets nothing, not even status."
+            stateLabel.setText("<html><span style='color:#C0392B'><b>Locked</b></span>: Claude can read status and logs but can't send anything."
                     + " Unlock with the padlock (toolbar, Machine menu, Cmd/Ctrl+Shift+L).</html>");
         } else if (s.motionExpiresAt() != null) {
             long left = Math.max(0, Duration.between(Instant.now(), s.motionExpiresAt()).toSeconds());

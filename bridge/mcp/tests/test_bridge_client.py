@@ -101,8 +101,9 @@ async def test_against_fake(fake: FakeBridge, home: Path) -> None:
         await client.command_result("c-999")
     assert await client.file() is None
     fake.set_locked(True)
+    assert (await client.status())["authority"]["locked"] is True  # reads work while locked
     with pytest.raises(BridgeLockedError):
-        await client.status()
+        await client.command(["$I"], tag="t")
     fake.set_locked(False)
     assert (await client.status())["authority"]["locked"] is False
 
@@ -130,15 +131,17 @@ async def test_events_backlog_live_and_lock(
                     await client.notify("hello", "info")
                 if rec["kind"] == "notify":
                     await anyio.to_thread.run_sync(fake.set_locked, True)
+                    return
 
-    with pytest.raises(BridgeLockedError):
-        await follow()
+    await follow()
     assert [r["kind"] for r in got] == ["session", "session", "notify"]
     assert got[-1]["data"]["text"] == "hello"
-    # A new stream while locked is refused too.
+    # The lock gates actions only: a new stream opens while locked, but notify is refused.
+    async for rec in client.events(since=0):
+        assert rec["seq"] == 1
+        break
     with pytest.raises(BridgeLockedError):
-        async for _ in client.events():
-            pass
+        await client.notify("locked", "info")
 
 
 async def test_events_wrong_token(fake: FakeBridge, home: Path) -> None:

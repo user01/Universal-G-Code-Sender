@@ -92,7 +92,7 @@ Subscribe to:
 The operator controls Claude's authority from a UGS panel (a docked window). Claude can't change it.
 
 **MCP lock (master switch).** A lock/unlock toggle in the UGS toolbar, with a padlock icon that shows the state, mirrored in the bridge panel and the status bar.
-- **Locked:** the bridge API refuses every request from the MCP side, reads included, with `423 Locked` and `{"error": "locked_by_operator"}`. Open WebSocket streams are closed. Claude sees "UGS access is locked by the operator" and nothing else, not even status. Session logging, notifications and the 3D viewer, which are the operator's own tools, keep working.
+- **Locked:** Claude can **always read** (status, console, logs, settings, the loaded file, the event stream), but every action from the MCP side, including feed hold and reset, is refused with `423 Locked` and `{"error": "locked_by_operator"}`, and nothing reaches the machine. (Changed 2026-11-16 at the operator's request: originally reads were refused too.) Session logging, notifications and the 3D viewer keep working.
 - **Unlocked:** the authority levels below apply.
 - UGS **starts locked** every launch, and the state is never persisted as unlocked. Locking also disarms Motion and Stream immediately: it sends nothing to the machine, but drops any queued Claude commands that haven't been sent yet. Unlocking returns to Observe/Query, never to an armed level.
 - Every lock/unlock is logged (`kind: "authority"`) and, if enabled, notified. Keyboard shortcut and menu entry: *Machine → Lock Claude access*.

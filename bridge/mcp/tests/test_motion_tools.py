@@ -100,12 +100,12 @@ async def test_locked_gives_plain_message(sim_fake: FakeBridge, home: Path) -> N
             ("probe", {"axis": "Z", "max_distance": 5, "feed": 100}),
             ("hold", {}),
             ("reset", {}),
-            ("origins", {}),
-            ("plan_resume", {"target": "stopped"}),
         ]:
             text, err = await _call(client, tool, args)
             assert err, tool
             assert text.endswith("UGS access is locked by the operator"), text
+        text, err = await _call(client, "origins", {})  # reads work while locked
+        assert "locked by the operator" not in text, text
     assert not [r for r in sim_fake.records if r["kind"] == "tx"]
 
 

@@ -67,7 +67,8 @@ import java.util.regex.Pattern;
  * The bridge API (bridge/docs/api.md, contract v1): routing, authentication, the MCP lock and every endpoint.
  * Transport-independent: {@link LiteHttpServer} hands it parsed requests, and tests call {@link #handle} directly.
  * <p>
- * Clients: {@code mcp} ({@code Authorization: Bearer <token file>}) is subject to the operator's lock;
+ * Clients: {@code mcp} ({@code Authorization: Bearer <token file>}) may always read; its actions (POST) are
+ * subject to the operator's lock;
  * {@code viewer} ({@code Bearer v.<viewer token>}, or {@code ?vt=}/subprotocol {@code vt.<token>} on the WebSocket)
  * is read-only and not affected by the lock.
  */
@@ -130,11 +131,6 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
             if (p != null) {
                 p.cancel();
             }
-            for (EventStream es : List.copyOf(streams)) {
-                if (es.client().equals("mcp")) {
-                    es.close(4423, "locked_by_operator");
-                }
-            }
         } else if (change == Authority.Change.DISARMED) {
             d.commands().dropAbove(s.level(), "authority dropped to " + s.level().id());
             OperatorPrompts.Prompt p = runPrompt;
@@ -179,7 +175,8 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
             logClient(guessClient(req.header("authorization")), "auth_failed", req.remote(), route);
             return ApiErrors.unauthorized();
         }
-        if (client == Client.MCP && d.authority().isLocked()) {
+        // The lock gates actions only: Claude can always read (GET), so it can watch and advise while locked.
+        if (client == Client.MCP && d.authority().isLocked() && !req.method().equals("GET")) {
             logClient("mcp", "locked_refused", req.remote(), route);
             return ApiErrors.locked();
         }
@@ -343,10 +340,6 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
         if (client == null) {
             logClient(guessClient(req.header("authorization")), "auth_failed", req.remote(), "/events");
             return LiteHttpServer.Upgrade.deny(ApiErrors.unauthorized());
-        }
-        if (client == Client.MCP && d.authority().isLocked()) {
-            logClient("mcp", "locked_refused", req.remote(), "/events");
-            return LiteHttpServer.Upgrade.deny(ApiErrors.locked());
         }
         long since;
         try {

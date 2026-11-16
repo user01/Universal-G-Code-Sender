@@ -119,6 +119,7 @@ Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clea
 - D20 **BitSetter tool changes are on by default** (stock UGS tool-change handling off while on); the operator can turn them off in the panel and the choice persists in `runtime.json` (a file from before D20, without `tool_changes_chosen`, is turned on).
 - D21 **Claude may switch the router off (`M5`, `S0`) but never on:** `M3`/`M4` and non-zero `S` are refused; the operator starts the router.
 - D22 **Skip the BitSetter measurement when the length is known:** an `M6` for the tool in the collet, measured in this connection with no reset/alarm/homing/reconnect/G54 Z change since, sends only the `T` word, logs `tool` `confirmed` with `measurement_skipped`, and doesn't notify. Any doubt runs the full change.
+- D23 **The MCP lock gates actions, not reads** (operator, 2026-11-16). Locked, Claude can still GET everything and keep `WS /events` open, so it can watch and advise; every POST (including hold/reset and notify) gets 423. Supersedes the "reads included" rule in SPEC §4.3.
 
 ### Upstream patch candidates (from A), approved (D17); landed in W2 A2 (see the table above)
 - P3 a listener hook in `BufferedCommunicator.sendByteImmediately`, so real-time bytes (hold, resume, reset, overrides) are logged as tx. Without it, operator real-time bytes are invisible in the log.

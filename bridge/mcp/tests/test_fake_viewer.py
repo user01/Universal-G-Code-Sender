@@ -61,7 +61,13 @@ def test_viewer_token_reads_and_file_content(vfake: FakeBridge, tmp_path: Path) 
         vfake.set_locked(True)
         assert c.get(_url(vfake, f"{API}/status"), headers=viewer).status_code == 200
         mcp = {"Authorization": f"Bearer {vfake.token}"}
-        assert c.get(_url(vfake, f"{API}/status"), headers=mcp).status_code == 423
+        assert (
+            c.get(_url(vfake, f"{API}/status"), headers=mcp).status_code == 200
+        )  # reads stay open
+        assert (
+            c.post(_url(vfake, f"{API}/command"), headers=mcp, json={"lines": ["?"]}).status_code
+            == 423
+        )
         # static viewer files and CORS for a dev page
         assert "viewer" in c.get(_url(vfake, "/view/")).text
         pre = c.options(

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Machine Session Checklist</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e2e0da;
+    --todo: #9a988f; --doing: #b86e00; --done: #2f7d32; --fail: #b3261e; --skip: #6b6a66;
+    --now-bg: #fff4dc; --now-line: #e9b44c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --panel: #1f1f1d; --ink: #ecebe6; --muted: #9c9a93; --line: #34332f;
+      --todo: #77756d; --doing: #f0a63a; --done: #6cc070; --fail: #ef6b62; --skip: #8a887f;
+      --now-bg: #2c2414; --now-line: #8a6a24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin: 12px 0 18px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--done); transition: width .4s; }
+  .now { background: var(--now-bg); border: 1px solid var(--now-line); border-radius: 8px; padding: 12px 14px; margin-bottom: 20px; }
+  .now b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--doing); margin-bottom: 2px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 14px; }
+  section h2 { font-size: 15px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+  section h2 span { color: var(--muted); font-weight: normal; font-size: 13px; }
+  .item { display: grid; grid-template-columns: 26px 1fr; gap: 8px; padding: 9px 14px; border-top: 1px solid var(--line); }
+  .item:first-of-type { border-top: 0; }
+  .item.doing { background: var(--now-bg); }
+  .mark { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--todo); display: grid; place-items: center;
+          font-size: 12px; font-weight: 700; color: #fff; margin-top: 1px; }
+  .done .mark { background: var(--done); border-color: var(--done); }
+  .fail .mark { background: var(--fail); border-color: var(--fail); }
+  .skip .mark { border-color: var(--skip); color: var(--skip); }
+  .doing .mark { border-color: var(--doing); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--doing) 25%, transparent); } }
+  .title { font-weight: 600; }
+  .skip .title { color: var(--muted); text-decoration: line-through; }
+  .who { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-left: 6px; font-weight: normal; }
+  .detail { color: var(--muted); font-size: 13.5px; }
+  .value { font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin-top: 3px; }
+  .note { font-size: 13.5px; margin-top: 3px; }
+  .log { font-size: 13px; color: var(--muted); }
+  .log li { margin: 2px 0; }
+  .stale { color: var(--fail); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">Machine session</h1>
+    <div class="meta"><span id="count"></span> · updated <span id="updated">–</span></div>
+  </header>
+  <div class="bar"><div id="bar" style="width:0"></div></div>
+  <div class="now" id="now" hidden><b>Now</b><span id="nowtext"></span></div>
+  <div id="sections"></div>
+  <section><h2>Session log</h2><ul class="log" id="log"></ul></section>
+</main>
+<script>
+const MARK = { done: "✓", fail: "✕", skip: "–", doing: "", todo: "" };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let lastText = "";
+
+function render(st) {
+  document.getElementById("title").textContent = st.title || "Machine session";
+  document.title = st.title || "Machine Session Checklist";
+  const items = st.sections.flatMap(s => s.items);
+  const closed = items.filter(i => ["done", "skip", "fail"].includes(i.status)).length;
+  document.getElementById("count").textContent = `${closed} / ${items.length}`;
+  document.getElementById("bar").style.width = `${(100 * closed / Math.max(items.length, 1)).toFixed(1)}%`;
+  document.getElementById("updated").textContent = st.updated || "–";
+  const now = document.getElementById("now");
+  now.hidden = !st.now;
+  document.getElementById("nowtext").innerHTML = esc(st.now);
+  document.getElementById("sections").innerHTML = st.sections.map(s => {
+    const n = s.items.filter(i => i.status === "done").length;
+    return `<section><h2>${esc(s.title)}<span>${n}/${s.items.length}</span></h2>${s.items.map(i => `
+      <div class="item ${esc(i.status || "todo")}" id="${esc(i.id)}">
+        <div class="mark">${MARK[i.status] ?? ""}</div>
+        <div>
+          <div class="title">${esc(i.id)} · ${esc(i.title)}${i.who ? `<span class="who">${esc(i.who)}</span>` : ""}</div>
+          ${i.detail ? `<div class="detail">${esc(i.detail)}</div>` : ""}
+          ${i.value ? `<div class="value">${esc(i.value)}</div>` : ""}
+          ${i.note ? `<div class="note">${esc(i.note)}</div>` : ""}
+        </div>
+      </div>`).join("")}</section>`;
+  }).join("");
+  document.getElementById("log").innerHTML = (st.log || []).slice().reverse().map(l => `<li>${esc(l)}</li>`).join("");
+}
+
+async function poll() {
+  try {
+    const r = await fetch("state.json?ts=" + Date.now(), { cache: "no-store" });
+    const text = await r.text();
+    if (text !== lastText) { lastText = text; render(JSON.parse(text)); }
+    document.getElementById("updated").classList.remove("stale");
+  } catch (e) {
+    document.getElementById("updated").classList.add("stale");
+  }
+}
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

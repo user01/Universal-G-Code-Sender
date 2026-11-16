@@ -2,7 +2,8 @@
 
 Started by ContractPythonTest (JUnit) with the bridge home of an in-process Java API (temp
 dir, unlocked at Query). Prints ``LOCK_ME`` once the event stream is live and waits for
-``locked`` on stdin, after which the Java side has locked Claude access. Exits 0 and prints
+``locked`` on stdin, after which the Java side has locked Claude access
+(reads continue). Exits 0 and prints
 ``CONTRACT OK`` when every check passes.
 
     uv run --frozen --package ugs-mcp python contract_client.py <bridge-home>
@@ -87,20 +88,27 @@ async def main(home: Path) -> None:
         except BridgeUnauthorizedError as exc:
             check(exc.status == 401, "401 with a wrong token")
 
-    # events: backlog then live; the operator locks -> close 4423 -> BridgeLockedError
+    # events: backlog then live; the operator locks -> the stream stays open (reads always work)
     received: list[dict[str, Any]] = []
-    outcome: dict[str, BaseException | None] = {"error": None}
     backlog_seen = anyio.Event()
+    lock_seen = anyio.Event()
+    # The backlog holds the launch-time lock record; only a later one counts.
+    lock_asked: dict[str, int | None] = {"seq": None}
 
     async def consume() -> None:
-        try:
-            async for rec in client.events(since=0):
-                received.append(rec)
-                if len(received) >= 3:
-                    backlog_seen.set()
-        except BaseException as exc:
-            outcome["error"] = exc
-            backlog_seen.set()
+        async for rec in client.events(since=0):
+            received.append(rec)
+            if len(received) >= 3:
+                backlog_seen.set()
+            asked = lock_asked["seq"]
+            if (
+                asked is not None
+                and rec["seq"] > asked
+                and rec["kind"] == "authority"
+                and rec["data"].get("locked") is True
+            ):
+                lock_seen.set()
+                return
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(consume)
@@ -112,28 +120,22 @@ async def main(home: Path) -> None:
             all({"seq", "t", "kind", "src", "data"} <= r.keys() for r in received),
             "events: record envelope",
         )
+        lock_asked["seq"] = received[-1]["seq"]
         print("LOCK_ME", flush=True)
         answer = await anyio.to_thread.run_sync(sys.stdin.readline)
         check(answer.strip() == "locked", "operator locked")
         with anyio.fail_after(10):
-            while outcome["error"] is None:
-                await anyio.sleep(0.05)
-    check(
-        isinstance(outcome["error"], BridgeLockedError),
-        f"events closed as locked ({outcome['error']!r})",
-    )
+            await lock_seen.wait()
+    check(lock_seen.is_set(), "events: stream stays open and reports the lock")
 
-    # 423 on every request while locked
+    # reads work while locked; actions are refused with 423
+    st = await client.status()
+    check(st["authority"]["locked"] is True, "status readable while locked")
     try:
-        await client.status()
-        check(False, "status refused while locked")
+        await client.command(["$I"], tag="contract")
+        check(False, "command refused while locked")
     except BridgeLockedError as exc:
         check(exc.status == 423 and exc.code == "locked_by_operator", "423 locked_by_operator")
-    try:
-        async for _ in client.events(since=0):
-            check(False, "events refused while locked")
-    except BridgeLockedError:
-        check(True, "events upgrade refused while locked")
 
     print("CONTRACT OK", flush=True)
 

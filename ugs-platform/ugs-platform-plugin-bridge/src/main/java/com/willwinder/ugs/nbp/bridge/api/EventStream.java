@@ -119,7 +119,7 @@ final class EventStream implements LiteHttpServer.WsEndpoint {
         }
     }
 
-    /** Closes the socket with {@code code} (4423 when the operator locks). */
+    /** Closes the socket with {@code code} (4423 is reserved; locking no longer closes streams). */
     void close(int code, String reason) {
         WsSession s = session;
         if (s != null) {

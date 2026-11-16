@@ -19,3 +19,6 @@ node_modules/
 
 # Dev GUI isolated home (settings, userdir, bridge logs)
 .dev-home/
+
+# Live machine-session checklist state (rewritten during a session)
+checklist/state.json

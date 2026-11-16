@@ -68,8 +68,8 @@ public final class LockClaudeAction extends AbstractAction implements Presenter.
     }
 
     static String tooltip(boolean locked) {
-        return locked ? "Claude access is LOCKED: Claude gets nothing, not even status. Click to unlock (Observe/Query)."
-                : "Claude access is UNLOCKED. Click to lock: refuses every Claude request and drops its queued commands.";
+        return locked ? "Claude access is LOCKED: Claude can read status and logs but can't send anything. Click to unlock (Observe/Query)."
+                : "Claude access is UNLOCKED. Click to lock: refuses every Claude action (reads still work) and drops its queued commands.";
     }
 
     @Override

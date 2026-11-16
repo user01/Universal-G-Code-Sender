@@ -4,9 +4,9 @@ Serves the read endpoints, ``POST /command`` (lines go to a simulated GRBL: resu
 ``SimulatedGrbl`` by default, or the workspace's ``ugs_sim.machine.ShapeokoGrbl`` with the
 BitSetter and BitZero), ``/realtime``, ``/notify``, ``/authority/request``, ``/origins``,
 ``/origins/apply``, ``/file/load``, ``/file/run``, ``/job/state``, ``/job/resume/plan``,
-``/job/resume`` and ``WS /events``, with token auth (401), the operator lock (423 / WebSocket
-close 4423) and authority levels (403 with ``required``). Every record it emits follows
-``bridge/schema/log-record.schema.json``.
+``/job/resume`` and ``WS /events``, with token auth (401), the operator lock (423 on actions;
+reads and the event stream stay open) and authority levels (403 with ``required``). Every
+record it emits follows ``bridge/schema/log-record.schema.json``.
 
 Like UGS, commands run in order on one queue (a worker thread), so ``POST /command`` answers
 202 at once and results arrive at ``GET /command/{id}``. ``$H``/``$X`` from Claude, file runs
@@ -281,10 +281,6 @@ class FakeBridge:
                 "operator",
                 {"locked": locked, "level": self.level.value, "by": "operator"},
             )
-            if locked:
-                for q, loop, _ in list(self._subscribers):
-                    if id(q) not in self._viewer_queues:  # the lock doesn't apply to the viewer
-                        loop.call_soon_threadsafe(q.put_nowait, None)
 
     def set_level(self, level: str) -> None:
         with self._lock:
@@ -786,7 +782,7 @@ class FakeBridge:
                 "client", "bridge", {"client": "mcp", "action": "auth_failed", "remote": remote}
             )
             return _err(401, "unauthorized", "missing or wrong token")
-        if self.locked:
+        if self.locked and request.method != "GET":  # the lock gates actions; reads always work
             self.emit(
                 "client", "bridge", {"client": "mcp", "action": "locked_refused", "remote": remote}
             )
@@ -1366,12 +1362,6 @@ class FakeBridge:
                 "client", "bridge", {"client": "mcp", "action": "auth_failed", "remote": remote}
             )
             await self._deny(ws, 401, "unauthorized")
-            return
-        if not viewer and self.locked:
-            self.emit(
-                "client", "bridge", {"client": "mcp", "action": "locked_refused", "remote": remote}
-            )
-            await self._deny(ws, 423, "locked_by_operator")
             return
         try:
             since = int(ws.query_params.get("since", "0"))

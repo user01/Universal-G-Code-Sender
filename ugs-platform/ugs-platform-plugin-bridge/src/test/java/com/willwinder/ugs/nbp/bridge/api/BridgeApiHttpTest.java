@@ -90,16 +90,20 @@ public class BridgeApiHttpTest {
     }
 
     @Test
-    public void lockedRefusesEveryMcpRequestWith423AndNothingElse() throws Exception {
-        for (String p : new String[]{"/status", "/log", "/settings", "/profile", "/command/c-1"}) {
-            HttpResponse<String> r = f.get(p);
+    public void lockedRefusesEveryMcpActionWith423ButReadsWork() throws Exception {
+        for (String p : new String[]{"/status", "/log", "/settings", "/profile"}) {
+            assertEquals(p, 200, f.get(p).statusCode());
+        }
+        assertTrue(ApiFixture.json(f.get("/status")).getAsJsonObject("authority").get("locked").getAsBoolean());
+        for (String[] p : new String[][]{{"/realtime", "{\"op\":\"hold\"}"}, {"/command", "{\"lines\":[\"?\"]}"},
+                {"/notify", "{\"text\":\"x\"}"}}) {
+            HttpResponse<String> r = f.post(p[0], p[1]);
             assertError(r, 423, "locked_by_operator");
             JsonObject body = ApiFixture.json(r);
             assertEquals(Set.of("error", "message"), body.keySet());
             assertEquals("UGS access is locked by the operator", body.get("message").getAsString());
         }
-        assertError(f.post("/realtime", "{\"op\":\"hold\"}"), 423, "locked_by_operator");
-        assertTrue("nothing reached the machine", f.link.realtime.isEmpty());
+        assertTrue("nothing reached the machine", f.link.realtime.isEmpty() && f.link.sent.isEmpty());
         assertTrue(records("client").stream().anyMatch(r -> r.getAsJsonObject("data").get("action").getAsString().equals("locked_refused")));
     }
 
@@ -475,7 +479,7 @@ public class BridgeApiHttpTest {
     }
 
     @Test
-    public void eventsSendTheBacklogThenLiveRecordsAndCloseWith4423OnLock() throws Exception {
+    public void eventsSendTheBacklogThenLiveRecordsAndStayOpenOnLock() throws Exception {
         f.unlock(Level.QUERY);
         Collector c = new Collector();
         ws("?since=0", f.token, c);
@@ -489,17 +493,16 @@ public class BridgeApiHttpTest {
             assertTrue("strictly increasing seq", c.records.get(i).get("seq").getAsLong() > c.records.get(i - 1).get("seq").getAsLong());
         }
         f.lock.lock();
-        assertEquals(4423, (int) c.closed.get(5, TimeUnit.SECONDS));
+        ApiFixture.await(() -> c.records.stream().anyMatch(r -> r.get("kind").getAsString().equals("authority")
+                && r.getAsJsonObject("data").has("locked") && r.getAsJsonObject("data").get("locked").getAsBoolean()), "lock record");
+        assertFalse("the MCP stream stays open when locked", c.closed.isDone());
     }
 
     @Test
-    public void eventsUpgradeIsRefusedWhenLockedOrUnauthorized() throws Exception {
-        try {
-            ws("", f.token, new Collector());
-            fail("locked");
-        } catch (ExecutionException e) {
-            assertEquals(423, handshakeStatus(e));
-        }
+    public void eventsUpgradeWorksWhenLockedButNotUnauthorized() throws Exception {
+        Collector locked = new Collector();
+        ws("?since=0", f.token, locked);
+        ApiFixture.await(() -> !locked.records.isEmpty(), "backlog while locked");
         try {
             ws("", "wrong", new Collector());
             fail("bad token");

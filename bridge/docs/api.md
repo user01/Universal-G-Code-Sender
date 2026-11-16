@@ -16,7 +16,7 @@ Served by the UGS plugin. Consumed by `bridge/mcp` (Claude) and `bridge/viewer` 
 | `viewer` | per-launch viewer token, passed when UGS opens the browser: `/view/#vt=<token>`, then sent as `Authorization: Bearer v.<token>` | no. Read-only: GET endpoints and `/events` only |
 
 - Missing or wrong token: `401 {"error":"unauthorized"}`, logged as a `client` record.
-- **Locked** (SPEC §4.3): every `mcp` request gets `423 {"error":"locked_by_operator","message":"UGS access is locked by the operator"}`, and open `mcp` WebSockets are closed with code 4423. Nothing else leaks (no status). A new `WS /events` upgrade is refused with HTTP 423 (or 401 for a bad token); a server that can only refuse after accepting closes at once with 4423 (or 4401). Clients treat both forms alike.
+- **Locked** (SPEC §4.3, changed 2026-11-16 by the operator): `mcp` **reads stay open** (every GET and `WS /events`), so Claude can always watch. Every `mcp` action (POST: commands, realtime including hold/reset, notify, authority requests, file load/run, resume) gets `423 {"error":"locked_by_operator","message":"UGS access is locked by the operator"}` and nothing is sent. Locking drops Claude's queued commands; open streams stay open.
 - The lock state and level change only from the UGS UI. No endpoint can unlock or raise authority. `POST /authority/request` only *asks*.
 
 ## Errors
