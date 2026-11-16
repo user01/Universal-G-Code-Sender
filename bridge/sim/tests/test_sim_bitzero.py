@@ -1,7 +1,7 @@
 """BitZero V2 XY/XYZ probing and feed-hold deceleration, over a real loopback TCP socket.
 
 Geometry under test (``ugs_sim.bitzero``): stock top -95.6 (tool-tip machine Z), tool 40 mm
-long, block 13 mm thick (profile, ledger B1), 58 mm square (B2), placeholder bore 22 mm with
+long, block thickness from the profile (ledger B1), 58 mm square (B2), placeholder bore 22 mm with
 its center 14.5 mm in from the registration corner (B3 unknown), placeholder lip 2 mm.
 """
 
@@ -13,14 +13,17 @@ import time
 
 import pytest
 
+from ugs_sim.profile import load_profile
 from ugs_sim.server import ThreadedSimServer
 from ugs_sim.testing import GrblClient, bitzero_xyz_corner
 
 PRB = re.compile(r"\[PRB:([-\d.]+),([-\d.]+),([-\d.]+):([01])\]")
 STOCK_TOP = -95.6
 TOOL_LEN = 40.0
-THICKNESS = 13.0
-TOP_SPINDLE = STOCK_TOP + THICKNESS + TOOL_LEN  # -42.6
+_PLATE = load_profile().bitzero_plate_thickness
+assert _PLATE is not None
+THICKNESS: float = _PLATE  # the profile value (ledger B1)
+TOP_SPINDLE = STOCK_TOP + THICKNESS + TOOL_LEN
 BORE_DIA, BORE_OFF = 22.0, 14.5
 LIP = 2.0
 CORNER = (-420.0, -420.0)  # the stock's front-left corner

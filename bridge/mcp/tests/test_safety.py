@@ -340,7 +340,7 @@ def test_limits_record_unverified_assumptions() -> None:
     assert LIMITS.envelope is not None
     assert not LIMITS.envelope.verified
     assert any("ledger A1/C6" in a for a in LIMITS.assumptions)
-    assert LIMITS.plate_thickness == 13.0
+    assert LIMITS.plate_thickness == PROFILE["bitzero"]["plate_thickness"]
     assert not LIMITS.plate_verified
     assert not LIMITS.xy_probe
     assert "B3" in LIMITS.xy_probe_reason

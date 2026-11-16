@@ -38,7 +38,7 @@
     "verified": false
   },
   "bitzero": {
-    "plate_thickness": 13.0,
+    "plate_thickness": 13.35,
     "plate_thickness_verified": false,
     "xy_offset": null,
     "max_travel": 25.0,
@@ -46,7 +46,7 @@
     "slow_feed": 50,
     "retract": 2.0,
     "pin": "P",
-    "plate_thickness_source": "community-measured BitZero V2: 11 mm aluminum + 2 mm plastic base (ledger B1)",
+    "plate_thickness_source": "paper test on this machine 2026-11-16: probe with 13.0 put Z0 at machine -50.720, paper dragged at work Z -0.260, so 13.0 + 0.26 + ~0.1 paper = 13.36 (calipers 13.1-13.45). Single paper test; ledger B1",
     "outer_size": [
       58.0,
       58.0

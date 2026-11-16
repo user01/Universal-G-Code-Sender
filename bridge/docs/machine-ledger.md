@@ -42,6 +42,7 @@ Run `uv run shapeoko-capture` from `../resurfacer` with Carbide Motion and UGS c
 | C4 | Tool-change park position the operator can reach comfortably | Tool-change interceptor (§11.5) | front center, X −222, Y −440, Z −5 | assumed |
 | C5 | BitRunner: time from `M3` until the router is at speed | Resume spin-up dwell (D15) | 2.0 s (matches the post's `G4 P2.0`) | assumed |
 | C6 | Real reachable envelope per axis (jog to each limit slowly) | Envelope checks independent of `$130`–`$132` | 445 × 456 × 95 | assumed |
+| C7 | BitRunner V2 switching: router speed is set only by its dial; S only has to trigger the BitRunner | Analyzer must warn on `M3` with S too low; RPM comes from the header's ROUTER DIAL, not S | **binary**: `M3 S10000` does NOT switch it on, `M3 S18000` does (`$30=24000`, so S10000 = 42% PWM). Rule: S ≥ 18000. The SPINDLE ENABLE pendant must be lit. GRBL reports the spindle on (`A:S`) even when the BitRunner did not switch, so UGS cannot see it. If a VFD spindle is ever fitted, S becomes the speed again (profile change only) | verified 2026-11-16 |
 
 ## D. Workflow checks (after A–C)
 

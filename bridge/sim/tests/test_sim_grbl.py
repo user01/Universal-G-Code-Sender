@@ -158,8 +158,10 @@ def test_bitzero_on_stock(homed: GrblClient, sim: ThreadedSimServer) -> None:
     m = PRB.match(out[0])
     assert m
     assert m.group(4) == "1"
-    # stock top -95.6 + plate 13.0 (profile, ledger B1) + tool 40
-    assert float(m.group(3)) == pytest.approx(-95.6 + 13.0 + 40.0, abs=1e-3)
+    # stock top -95.6 + plate (profile, ledger B1) + tool 40
+    plate = load_profile().bitzero_plate_thickness
+    assert plate is not None
+    assert float(m.group(3)) == pytest.approx(-95.6 + plate + 40.0, abs=1e-3)
     sim.control("bitzero off")
     homed.command("G0 Z5")
     assert homed.command("G91 G38.3 Z-20 F200")[0].endswith(":0]")

@@ -1,7 +1,7 @@
 """Motion tool round-trips: MCP client -> ugs-mcp -> HTTP -> fake bridge -> ShapeokoGrbl.
 
 The simulator (``bridge/sim``, ``ugs_sim.machine.ShapeokoGrbl``) models the BitSetter and the
-BitZero from the machine profile: plate 13 mm (sourced, ledger B1), default tool 40 mm, stock
+BitZero from the machine profile: plate thickness from the profile (ledger B1), default tool 40 mm, stock
 top at tool-tip Z -95.6, BitSetter top at tip Z -105 at X-4.2 Y-448.2. Time runs instantly
 (``time_scale=inf``) except where a test needs motion in progress.
 """
@@ -21,6 +21,7 @@ from mcp_paths import SCHEMA_DIR
 
 from ugs_mcp.bridge_client import BridgeClient, BridgeForbiddenError
 from ugs_mcp.config import local_profile
+from ugs_mcp.safety import fmt_num
 from ugs_mcp.server import build_server
 from ugs_mcp.testing.fake_bridge import FakeBridge
 from ugs_sim.machine import ShapeokoGrbl
@@ -29,8 +30,10 @@ from ugs_sim.profile import load_profile
 pytestmark = pytest.mark.anyio
 
 STOCK_XY = {"x": -300.0, "y": -370.0}
-BITZERO_CONTACT_Z = -42.6
-"""Spindle Z at contact: stock top -95.6 + plate 13 + tool 40."""
+PLATE = float(load_profile().bitzero_plate_thickness or 0.0)
+"""BitZero plate thickness from the profile (ledger B1)."""
+BITZERO_CONTACT_Z = round(-95.6 + PLATE + 40.0, 3)
+"""Spindle Z at contact: stock top -95.6 + plate + tool 40."""
 BITSETTER_CONTACT_Z = -65.0
 """Spindle Z at contact: BitSetter top -105 + tool 40."""
 
@@ -168,16 +171,16 @@ async def test_bitzero_z_probe_flow(sim_fake: FakeBridge, home: Path) -> None:
             {"axis": "Z", "max_distance": 25, "feed": 100, "expect": "touch the BitZero"},
         )
         assert not err, text
-        assert "[PRB:-300.000,-370.000,-42.600:1]" in text
-        assert "Contact at machine X-300 Y-370 Z-42.6" in text
-        assert "plate 13 mm, sourced, NOT measured; ledger B1" in text
+        assert f"[PRB:-300.000,-370.000,{BITZERO_CONTACT_Z:.3f}:1]" in text
+        assert f"Contact at machine X-300 Y-370 Z{fmt_num(BITZERO_CONTACT_Z)}" in text
+        assert f"plate {fmt_num(PLATE)} mm, sourced, NOT measured; ledger B1" in text
         assert "set_work_offset(z=-55.6)" in text
-        assert "MPos X-300 Y-370 Z-40.6" in text  # retracted 2 mm
+        assert f"MPos X-300 Y-370 Z{fmt_num(BITZERO_CONTACT_Z + 2)}" in text  # retracted 2 mm
 
         text, err = await _call(client, "set_work_offset", {"z": -55.6})
         assert not err, text
         assert "$# reads G54 X0 Y0 Z-55.6: verified." in text
-        assert "WPos X-300 Y-370 Z15" in text  # tip 15 mm above the stock top: 13 + 2
+        assert f"WPos X-300 Y-370 Z{fmt_num(PLATE + 2)}" in text  # tip plate + 2 mm above the stock
 
     assert _claude_motion_tx(sim_fake) == [
         "G21G90G94G53G0X-300Y-370Z-5",
