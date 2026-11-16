@@ -170,6 +170,11 @@ public final class BackendMachineLink implements MachineLink, UGSEventListener {
             throw new IllegalStateException("not connected");
         }
         byte b = (byte) Integer.parseInt(hex.substring(2), 16);
+        // The byte is logged as tx by UGS's real-time hook (P3); claim it for Claude before it goes out.
+        // '?' polls are implied by status records.
+        if (capture != null && !"status".equals(op)) {
+            capture.attributeRealtime(b, src, null);
+        }
         switch (op) {
             case "hold" -> {
                 if (Boolean.TRUE.equals(c.isStreaming()) && !Boolean.TRUE.equals(c.isPaused())) {
@@ -189,11 +194,6 @@ public final class BackendMachineLink implements MachineLink, UGSEventListener {
             case "reset" -> backend.issueSoftReset();
             case "status" -> c.requestStatusReport();
             default -> throw new IllegalArgumentException(op);
-        }
-        // UGS writes real-time bytes without a listener (until patch P3), so log them here; '?' polls are implied
-        // by status records.
-        if (capture != null && !"status".equals(op)) {
-            capture.recordRealtime(b, src, null);
         }
         return hex;
     }

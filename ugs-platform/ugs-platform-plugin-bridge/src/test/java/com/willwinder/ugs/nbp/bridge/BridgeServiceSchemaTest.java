@@ -136,7 +136,7 @@ public class BridgeServiceSchemaTest {
         c.rawResponseListener("<Idle|MPos:0.000,0.000,0.000|Bf:15,128|FS:0,0|Ov:100,100,100|A:SF>");
         c.UGSEvent(new ControllerStatusEvent(ControllerStatus.EMPTY_CONTROLLER_STATUS, ControllerStatus.EMPTY_CONTROLLER_STATUS));
         c.UGSEvent(new ControllerStateEvent(ControllerState.IDLE, ControllerState.ALARM));
-        c.recordRealtime((byte) 0x18, "operator", null);
+        c.realtimeByteSent((byte) 0x18);
 
         c.UGSEvent(new FileStateEvent(FileState.FILE_LOADED));
         c.UGSEvent(new StreamEvent(StreamEventType.STREAM_STARTED));
@@ -160,7 +160,7 @@ public class BridgeServiceSchemaTest {
 
         List<JsonObject> all = LogFiles.readAll(home);
         Set<String> kinds = all.stream().map(r -> r.get("kind").getAsString()).collect(Collectors.toSet());
-        assertEquals(Set.of("session", "authority", "event", "message", "tx", "rx", "command", "status", "file"), kinds);
+        assertEquals(Set.of("session", "authority", "event", "message", "tx", "rx", "command", "status", "file", "notify"), kinds);
         List<JsonObject> auth = all.stream().filter(r -> r.get("kind").getAsString().equals("authority")).toList();
         assertEquals(List.of(true, false, true), auth.stream()
                 .map(r -> r.getAsJsonObject("data").get("locked").getAsBoolean()).toList());

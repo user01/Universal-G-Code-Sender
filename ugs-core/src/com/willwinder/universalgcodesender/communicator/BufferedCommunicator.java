@@ -206,8 +206,10 @@ public abstract class BufferedCommunicator extends AbstractCommunicator {
 
             try {
                 this.sendingCommand(commandString);
-                connection.sendStringToComm(commandString + "\n");
+                // ugs-bridge patch P6: dispatch before writing, so listeners always get commandSent
+                // before any response to it (the response is read and dispatched on another thread).
                 getEventDispatcher().commandSent(command);
+                connection.sendStringToComm(commandString + "\n");
                 nextCommand = null;
             } catch (Exception e) {
                 e.printStackTrace();
@@ -310,6 +312,9 @@ public abstract class BufferedCommunicator extends AbstractCommunicator {
 
     @Override
     public void sendByteImmediately(byte b) throws Exception {
+        // ugs-bridge patch P3: real-time bytes are visible to listeners (dispatched before the write,
+        // like commandSent, so they precede the controller's reaction in the event order)
+        getEventDispatcher().realtimeByteSent(b);
         connection.sendByteImmediately(b);
     }
 }

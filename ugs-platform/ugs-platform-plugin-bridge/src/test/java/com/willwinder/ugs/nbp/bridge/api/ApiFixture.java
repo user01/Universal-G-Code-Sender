@@ -69,7 +69,7 @@ final class ApiFixture implements AutoCloseable {
         authority = new Authority(lock, log, clock);
         authority.logStart();
         link = new FakeLink(log);
-        Notifier n = withNotifier ? (t, text, level) -> notified.add(new String[]{t, text, level}) : Notifier.NONE;
+        Notifier n = withNotifier ? (t, text, level) -> notified.add(new String[]{t, text, level}) : BridgeApi.NO_NOTIFIER;
         host = new ApiHost(home, log, authority, link, prompts, () -> n);
         host.start(0, 0);
         token = Files.readString(home.resolve("token")).strip();

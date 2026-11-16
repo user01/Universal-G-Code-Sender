@@ -596,6 +596,38 @@ public class BufferedCommunicatorTest {
         assertTrue("Should have sent an event notifying that the command has completed in its own thread", eventDispatched.get());
     }
 
+    @Test
+    public void commandSentIsDispatchedBeforeTheLineIsWritten() throws Exception {
+        // ugs-bridge P6: a fast response is read on another thread; it must never be dispatched
+        // before the commandSent event of the command it answers.
+        Connection connection = mock(Connection.class);
+        ICommunicatorListener listener = mock(ICommunicatorListener.class);
+        instance.setConnection(connection);
+        instance.addListener(listener);
+
+        instance.queueCommand(new GcodeCommand("G0 X1"));
+        instance.streamCommands();
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(listener, connection);
+        order.verify(listener).commandSent(org.mockito.ArgumentMatchers.any(GcodeCommand.class));
+        order.verify(connection).sendStringToComm("G0 X1\n");
+    }
+
+    @Test
+    public void sendByteImmediatelyNotifiesListeners() throws Exception {
+        // ugs-bridge P3
+        Connection connection = mock(Connection.class);
+        ICommunicatorListener listener = mock(ICommunicatorListener.class);
+        instance.setConnection(connection);
+        instance.addListener(listener);
+
+        instance.sendByteImmediately((byte) 0x85);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(listener, connection);
+        order.verify(listener).realtimeByteSent((byte) 0x85);
+        order.verify(connection).sendByteImmediately((byte) 0x85);
+    }
+
     public static class BufferedCommunicatorImpl extends BufferedCommunicator {
         BufferedCommunicatorImpl(LinkedBlockingDeque<GcodeCommand> cb, LinkedBlockingDeque<GcodeCommand> asl) {
             super(cb, asl, new CommunicatorEventDispatcher());

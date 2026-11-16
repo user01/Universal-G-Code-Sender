@@ -38,7 +38,9 @@ import com.willwinder.ugs.nbp.bridge.job.ResumeTarget;
 import com.willwinder.ugs.nbp.bridge.log.FileFingerprint;
 import com.willwinder.ugs.nbp.bridge.log.LogRecord;
 import com.willwinder.ugs.nbp.bridge.log.SessionLog;
+import com.willwinder.ugs.nbp.bridge.notify.Messages;
 import com.willwinder.ugs.nbp.bridge.notify.Notifier;
+import com.willwinder.ugs.nbp.bridge.notify.Triggers;
 
 import java.io.File;
 import java.io.IOException;
@@ -79,6 +81,10 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
     private static final long CLIENT_LOG_INTERVAL_MS = 5000;
 
     enum Client { MCP, VIEWER }
+
+    /** Used when no notifier is running; {@code POST /notify} then logs the {@code notify} record itself. */
+    public static final Notifier NO_NOTIFIER = (trigger, text, level) -> {
+    };
 
     /** Everything the API reads from or acts on. */
     public record Deps(SessionLog log, Authority authority, StateTracker state, CommandService commands,
@@ -744,15 +750,15 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
             throw new BadRequest("text is longer than 2000 characters");
         }
         Notifier n = d.notifier().get();
-        if (n == Notifier.NONE) {
+        if (n == null || n == NO_NOTIFIER) {
             JsonObject o = new JsonObject();
-            o.addProperty("trigger", "claude");
+            o.addProperty("trigger", Triggers.CLAUDE_MESSAGE);
             o.addProperty("text", text);
             o.addProperty("level", level);
             o.add("sinks", new JsonObject());
             d.log().append(LogRecord.Kind.NOTIFY, LogRecord.Src.CLAUDE, o);
         } else {
-            n.send("claude", text, level);
+            n.send(Triggers.CLAUDE_MESSAGE, text, level); // the notifier logs the notify record with its sink results
         }
         return HttpResponse.json(202, "{}");
     }
@@ -767,8 +773,12 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
             throw new BadRequest("reason is longer than 500 characters");
         }
         Level wanted = Level.parse(level);
+        Level current = d.authority().level();
         d.authority().request(wanted, reason);
-        d.notifier().get().send("claude_request", "Claude asks for " + wanted.label() + " authority: " + reason, "info");
+        Notifier n = d.notifier().get();
+        if (n != null) {
+            n.send(Triggers.CLAUDE_AUTHORITY_REQUEST, Messages.authorityRequest(wanted.label(), current.label(), reason), "info");
+        }
         return HttpResponse.json(202, "{}");
     }
 

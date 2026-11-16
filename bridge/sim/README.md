@@ -30,6 +30,7 @@ time; a second connection is closed immediately.
 | `--capture PATH` | | resurfacer machine capture JSON: use its `$$` |
 | `--setting N=V` | | override a `$` setting, e.g. `--setting 130=845` to reproduce the 2026-11-15 mismatch |
 | `--tool MM` | `40` | tool tip below the spindle reference |
+| `--tool-dia MM` | `6.35` | tool diameter (the cylinder that touches the BitZero) |
 | `--bitsetter-top-z`, `--stock-top-z` | `-105`, `-95.6` | tool-tip Z (machine) of the setter / raw stock top |
 | `--m6 error\|ignore` | `error` | stock GRBL 1.1 answers `M6` with `error:20` |
 | `--no-connect-reset` | | connect without the DTR reset (profile `connect_resets_controller`) |
@@ -44,10 +45,15 @@ Text lines on the control port (`nc 127.0.0.1 <control-port>`) or stdin; one rep
 |---|---|
 | `state` | JSON: state, MPos, physical position, homed, G54, tool, probe pin, buffers, `rx_overflow` |
 | `tool [<length_mm>]` | operator swaps the bit (changes stick-out; BitSetter/BitZero readings follow) |
+| `tooldia [<mm>]` | tool diameter for BitZero contact (default 6.35) |
 | `alarm <n>` | raise `ALARM:<n>` (1 and 2 are critical: `[MSG:Reset to continue]`) |
 | `door [open\|close]` | safety door: `Door:1` (hold, `~` ignored) then `Door:0` (`~` resumes) |
 | `probe on\|off` | hold the probe input (BitZero clip touched, BitSetter pressed by hand) |
-| `bitzero on\|off` | BitZero plate present on the stock or removed |
+| `bitzero on\|off` | BitZero present on the stock or removed |
+| `bitzero` | JSON: mode (`follow`/`placed`), geometry, `bore_placeholder` |
+| `bitzero place [<x> <y>]` | place the BitZero V2 block with its lips hooked over machine XY `<x> <y>` (default: the stock's front-left corner); enables XY probing |
+| `bitzero bore <dia> <offset> [<offset_y>]` | bore diameter and bore-center-to-corner offset (ledger B3) |
+| `bitzero follow` | back to the default plate that is assumed under the tool wherever it Z-probes the stock |
 | `unplug` | drop the TCP client like a pulled USB cable; queued motion keeps running |
 | `reset` | hardware reset (power cycle) |
 | `timescale <x>` | change the simulation speed |
@@ -59,7 +65,7 @@ From resurfacer's `SimulatedGrbl`: 128-byte RX buffer (overflow is recorded, not
 fixed), 15-block planner with `ok` on queue, sync of `$`, G4, G10, G38, M0-M2/M30, M3/M5,
 homing ($H: about 2 s plus travel, ends at `-$27` = -1,-1,-1), `$X`, `$J=` jogs with soft-limit
 `error:15`, jog cancel 0x85, feed hold `!` (`Hold:1` then `Hold:0`) and resume `~`, soft reset
-0x18, `$$ $# $G $I $N`, G54 via `G10 L2/L20 P1`, Z-only `G38.2/G38.3` with `[PRB:...]`, probe
+0x18, `$$ $# $G $I $N`, G54 via `G10 L2/L20 P1`, `G38.2/G38.3` with `[PRB:...]` (extended below), probe
 alarms 4 (already triggered) and 5 (no contact), status `<...|MPos|Bf|FS|Pn:P|WCO>`.
 
 Added in `ugs_sim.machine`:
@@ -69,6 +75,35 @@ Added in `ugs_sim.machine`:
 - Physics: probe pin `P` when the tool **tip** (spindle Z minus tool length) touches the BitSetter
   or the BitZero plate on the stock. A tool change by `tool <mm>` shifts the BitSetter trigger by
   the length delta.
+- Probing in any direction: `G38.2`/`G38.3` (toward) and `G38.4`/`G38.5` (away) with any of
+  X, Y, Z. Contact is computed exactly along the straight move (no time stepping error);
+  `[PRB:x,y,z:1]` reports the contact point and the machine stops there. Failure as for Z:
+  `G38.2`/`G38.4` give `[PRB:…:0]` + `ALARM:5`, `G38.3`/`G38.5` give `[PRB:…:0]` + `ok`.
+  `G38.2/3` with the pin already closed, or `G38.4/5` with it open, give `ALARM:4`.
+  A zero-length probe gives `error:20`.
+- **BitZero V2** (`ugs_sim.bitzero`), two modes:
+  - `follow` (default, unchanged): a plate `plate_thickness` (13 mm) high is assumed under the
+    tool whenever a probe starts over the stock rectangle. Z only in practice.
+  - `placed` (`bitzero place`): a 58 × 58 mm aluminum block, 13 mm above the stock top, its
+    front/left faces 2 mm proud of the registration corner (lip, placeholder), with a through
+    bore. The tool is a vertical cylinder of `tooldia`. Contact = tip at or below the block top
+    and the tool disc overlapping aluminum (the square minus the bore): Z on the top (including
+    a tool overhanging an edge), XY against the bore wall, XY against the outer faces. Over the
+    bore a Z probe falls through (the stock is not conductive) and fails.
+  - Bore **placeholders**: 22 mm diameter, center 14.5 mm in from the corner on X and Y, used
+    while the profile's `bitzero.bore_diameter` / `bore_center_to_corner` are `null` (ledger
+    B3). Filling those in the profile replaces them.
+  - A reference XYZ corner routine, `ugs_sim.testing.bitzero_xyz_corner`: Z on the top, X± and
+    Y± inside the bore, corner = bore center − offset, Z0 = top − 13 mm. The chord midpoint
+    makes the center independent of the tool diameter; the tests recover the configured corner
+    within 0.01 mm for 1 to 12.7 mm tools.
+- **Feed-hold deceleration**: on `!` (or the door) the machine keeps moving along the planned
+  path and slows at the acceleration GRBL would use along that move (the smallest
+  `$12x / |direction component|`), so `Hold:1` lasts `v / a` simulated seconds and covers
+  `v² / 2a` (3000 mm/min on X at 400 mm/s²: 0.125 s, 3.125 mm), with `FS:` showing the falling
+  speed. Then `Hold:0`. `~` during `Hold:1` is ignored (GRBL resumes only a completed hold); a
+  repeated `!` doesn't restart it; `0x18` during `Hold:1` is a reset in motion (`ALARM:3`),
+  after `Hold:0` it keeps position. Scales with `--time-scale` like everything else.
 - Connect = DTR reset (profile `connect_resets_controller`): banner,
   `[MSG:'$H'|'$X' to unlock]`, Alarm. Reported MPos restarts at 0,0,0 but the gantry stays where
   it was physically (`state` shows both), so probing after `$X` without homing hits the
@@ -93,8 +128,11 @@ Added in `ugs_sim.machine`:
 
 ### Not modeled
 
-Acceleration, step timing, arcs as arcs, X/Y probing (`G38.x` with X/Y words gives `error:20`,
-so BitZero XY corner probing is not possible), `G38.4/38.5`, `G20` inches, `G28/G30`, `G92`,
+Acceleration outside feed holds (moves start and stop at full speed; jog cancel `0x85` stops
+at once), probe overshoot (the machine stops exactly at contact; real GRBL decelerates past it
+and reports `PRB` at the trigger), step timing, arcs as arcs, the BitSetter as anything but a
+point switch (±4 mm, tool center), the stock as an obstacle (a tool passes through wood), the
+BitZero's plastic base and lips as solids, a tilted or misplaced block, `G20` inches, `G28/G30`, `G92`,
 `G55-G59` selection, `$C` check mode, `$SLP`, hard limits and limit pins (`Pn:XYZ`), spindle
 speed, material removal, BitSetter plunger over-travel, `$10` report masks (always MPos +
 `Bf`).
@@ -102,7 +140,7 @@ speed, material removal, BitSetter plunger over-travel, `$10` report masks (alwa
 ## Tests
 
 ```sh
-uv run pytest sim/tests                     # ~5 s, real loopback sockets, ephemeral ports
+uv run pytest sim/tests                     # ~10 s, real loopback sockets, ephemeral ports
 UGS_SIM_JAVA=1 uv run pytest sim/tests      # + UGS GrblController check (~1 min, compiles ugs-core)
 ```
 
@@ -138,4 +176,7 @@ supervised hardware check:
   `ok` may follow the alarm; the capture should settle it.
 - `M6` answered with `error:20` (stock GRBL 1.1); Carbide's build may differ.
 - Geometry placeholders: tool length 40 mm, BitSetter top at tip Z -105, stock top -95.6,
-  BitZero plate 12.7 mm, stock rectangle X -420..-180, Y -420..-325.
+  stock rectangle X -420..-180, Y -420..-325. BitZero V2 thickness 13 mm (sourced, B1),
+  58 × 58 mm (sourced, B2); **bore 22 mm and center 14.5 mm from the corner are placeholders
+  (B3)**, the 2 mm lip is a guess.
+- Feed hold uses the `$120-$122` placeholders (400/400/200 mm/s²) until the capture (A, C1).

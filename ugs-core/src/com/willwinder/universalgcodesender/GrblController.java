@@ -138,8 +138,10 @@ public class GrblController extends AbstractController {
 
         initializer.reset();
         positionPollTimer.stop();
-        comm.connect(connectionDriver, port, portRate);
+        // ugs-bridge patch P4: announce CONNECTING before the port opens (as AbstractController does), so
+        // listeners that attach on that event (the session log) see the welcome lines
         setControllerState(ControllerState.CONNECTING);
+        comm.connect(connectionDriver, port, portRate);
         messageService.dispatchMessage(MessageType.INFO, "*** Connecting to " + connectionDriver.getProtocol() + port + ":" + portRate + "\n");
 
         initialize();

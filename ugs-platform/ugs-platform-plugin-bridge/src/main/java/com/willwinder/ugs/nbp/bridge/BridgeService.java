@@ -27,6 +27,7 @@ import com.willwinder.ugs.nbp.bridge.capture.CommandOrigins;
 import com.willwinder.ugs.nbp.bridge.log.BridgeHome;
 import com.willwinder.ugs.nbp.bridge.log.LogRecord;
 import com.willwinder.ugs.nbp.bridge.log.SessionLog;
+import com.willwinder.ugs.nbp.bridge.notify.BridgeNotifier;
 import com.willwinder.ugs.nbp.bridge.notify.Notifier;
 import com.willwinder.ugs.nbp.bridge.ui.SwingOperatorPrompts;
 import com.willwinder.universalgcodesender.model.BackendAPI;
@@ -52,6 +53,7 @@ public final class BridgeService implements Runnable {
     private static volatile ApiHost apiHost;
     private static volatile BackendMachineLink machineLink;
     private static volatile PendantWatch pendantWatch;
+    private static volatile BridgeNotifier notifier;
 
     public static BridgeLock lock() {
         return LOCK;
@@ -80,6 +82,11 @@ public final class BridgeService implements Runnable {
     /** The stock-pendant watcher, or null. */
     public static PendantWatch pendantWatch() {
         return pendantWatch;
+    }
+
+    /** Telegram/Slack notifier (also the {@code Notifier} for the API), or null if the bridge failed to start. */
+    public static BridgeNotifier notifier() {
+        return notifier;
     }
 
     public static CommandOrigins origins() {
@@ -119,6 +126,7 @@ public final class BridgeService implements Runnable {
         log.append(LogRecord.Kind.SESSION, LogRecord.Src.BRIDGE, start);
         authority = new Authority(LOCK, log, Clock.systemDefaultZone()); // logs every lock and level change
         authority.logStart();
+        notifier = BridgeNotifier.start(log);
 
         if (backend != null) {
             c.attach(backend);
@@ -139,6 +147,10 @@ public final class BridgeService implements Runnable {
             authority.dispose();
             authority = null;
         }
+        if (notifier != null) {
+            notifier.close();
+            notifier = null;
+        }
         if (c != null) {
             c.detach();
             log.append(LogRecord.Kind.SESSION, LogRecord.Src.BRIDGE, c.sessionData("bridge_stop"));
@@ -156,7 +168,7 @@ public final class BridgeService implements Runnable {
         }
         try {
             BackendMachineLink link = new BackendMachineLink(backend, ORIGINS, capture);
-            ApiHost host = new ApiHost(log.home(), log, authority, link, new SwingOperatorPrompts(), Notifier::lookup);
+            ApiHost host = new ApiHost(log.home(), log, authority, link, new SwingOperatorPrompts(), () -> notifier != null ? notifier : com.willwinder.ugs.nbp.bridge.api.BridgeApi.NO_NOTIFIER);
             host.start();
             machineLink = link;
             apiHost = host;

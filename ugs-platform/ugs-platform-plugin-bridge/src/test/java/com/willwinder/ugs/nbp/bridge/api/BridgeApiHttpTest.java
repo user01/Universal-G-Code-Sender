@@ -387,8 +387,9 @@ public class BridgeApiHttpTest {
         assertEquals(Level.OBSERVE, f.authority.level());
         assertEquals("motion", ApiFixture.json(f.get("/status")).getAsJsonObject("authority").get("requested").getAsString());
         assertEquals(2, f.notified.size());
-        assertEquals("claude", f.notified.get(0)[0]);
-        assertEquals("claude_request", f.notified.get(1)[0]);
+        assertEquals("claude_message", f.notified.get(0)[0]);
+        assertEquals("claude_authority_request", f.notified.get(1)[0]);
+        assertTrue(f.notified.get(1)[1].contains("Motion") && f.notified.get(1)[1].contains("probe Z"));
     }
 
     @Test
