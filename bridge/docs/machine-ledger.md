@@ -51,6 +51,7 @@ Run `uv run shapeoko-capture` from `../resurfacer` with Carbide Motion and UGS c
 | D2 | Tool change T02 → T21 through the bridge interceptor | The new tool touches the same stock top within 0.05 mm (paper test) |
 | D3 | Stop mid-job, soft reset, resume from the plan | The cut continues without a step or gouge |
 | D4 | Power-cycle mid-job, re-home, recover origin, re-measure, resume | Same as D3 |
+| D2a | At the tool-change prompt, the router is actually **off** (BitRunner relay open) and UGS shows the spindle off | In the simulator run the status still read spindle-on at the T21 prompt although `M5` was sent first; probably a stale report, must be confirmed before trusting the prompt |
 | D5 | Claude probe through MCP (Motion armed) with the operator watching | Bounded, logged, shown in the console as `[claude]` |
 
 ## Sources
