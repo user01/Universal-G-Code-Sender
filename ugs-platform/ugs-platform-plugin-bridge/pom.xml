@@ -12,6 +12,30 @@
     <packaging>nbm</packaging>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- The viewer (bridge/viewer), served by the API at /view/ -->
+            <resource>
+                <directory>${project.basedir}/../../bridge/viewer</directory>
+                <targetPath>com/willwinder/ugs/nbp/bridge/viewer</targetPath>
+                <includes>
+                    <include>index.html</include>
+                    <include>styles.css</include>
+                    <include>src/**</include>
+                    <include>vendor/**</include>
+                </includes>
+            </resource>
+            <!-- The default machine profile (an override in the bridge home wins), for GET /profile -->
+            <resource>
+                <directory>${project.basedir}/../../bridge/profiles</directory>
+                <targetPath>com/willwinder/ugs/nbp/bridge/profiles</targetPath>
+                <includes>
+                    <include>*.json</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.netbeans.utilities</groupId>

@@ -19,22 +19,27 @@
 package com.willwinder.ugs.nbp.bridge;
 
 import com.google.gson.JsonObject;
+import com.willwinder.ugs.nbp.bridge.api.ApiHost;
+import com.willwinder.ugs.nbp.bridge.api.Authority;
+import com.willwinder.ugs.nbp.bridge.api.BackendMachineLink;
 import com.willwinder.ugs.nbp.bridge.capture.Capture;
 import com.willwinder.ugs.nbp.bridge.capture.CommandOrigins;
 import com.willwinder.ugs.nbp.bridge.log.BridgeHome;
 import com.willwinder.ugs.nbp.bridge.log.LogRecord;
 import com.willwinder.ugs.nbp.bridge.log.SessionLog;
+import com.willwinder.ugs.nbp.bridge.notify.Notifier;
+import com.willwinder.ugs.nbp.bridge.ui.SwingOperatorPrompts;
 import com.willwinder.universalgcodesender.model.BackendAPI;
 import com.willwinder.universalgcodesender.services.LookupService;
 import org.openide.modules.OnStart;
 import org.openide.modules.OnStop;
 
-import java.util.function.Consumer;
+import java.time.Clock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Entry point of the bridge module. Owns the long-lived pieces (lock, session log, capture; API later).
+ * Entry point of the bridge module. Owns the long-lived pieces (lock, authority, session log, capture, local API).
  */
 @OnStart
 public final class BridgeService implements Runnable {
@@ -43,6 +48,10 @@ public final class BridgeService implements Runnable {
     private static final CommandOrigins ORIGINS = new CommandOrigins();
     private static volatile SessionLog sessionLog;
     private static volatile Capture capture;
+    private static volatile Authority authority;
+    private static volatile ApiHost apiHost;
+    private static volatile BackendMachineLink machineLink;
+    private static volatile PendantWatch pendantWatch;
 
     public static BridgeLock lock() {
         return LOCK;
@@ -56,6 +65,21 @@ public final class BridgeService implements Runnable {
     /** The capture, or null if the bridge failed to start. */
     public static Capture capture() {
         return capture;
+    }
+
+    /** Claude's authority (lock + level), or null if the bridge failed to start. */
+    public static Authority authority() {
+        return authority;
+    }
+
+    /** The local API, or null if it isn't running. */
+    public static ApiHost api() {
+        return apiHost;
+    }
+
+    /** The stock-pendant watcher, or null. */
+    public static PendantWatch pendantWatch() {
+        return pendantWatch;
     }
 
     public static CommandOrigins origins() {
@@ -72,7 +96,9 @@ public final class BridgeService implements Runnable {
         try {
             BackendAPI backend = LookupService.lookup(BackendAPI.class);
             start(backend, new SessionLog(BridgeHome.resolve()));
+            startApi(backend);
             DevConnect.maybeConnect(backend);
+            DevConnect.maybeUnlock(LOCK, authority);
             DevSnapshot.maybeStart();
         } catch (RuntimeException e) {
             LOGGER.log(Level.SEVERE, "ugs-bridge failed to start", e);
@@ -91,9 +117,8 @@ public final class BridgeService implements Runnable {
         JsonObject start = c.sessionData("bridge_start");
         start.addProperty("home", log.home().toString());
         log.append(LogRecord.Kind.SESSION, LogRecord.Src.BRIDGE, start);
-        log.append(LogRecord.Kind.AUTHORITY, LogRecord.Src.BRIDGE,
-                authorityData(LOCK.getState(), "bridge started (always locked at launch)", LogRecord.Src.BRIDGE));
-        LOCK.addListener(LOCK_LOGGER);
+        authority = new Authority(LOCK, log, Clock.systemDefaultZone()); // logs every lock and level change
+        authority.logStart();
 
         if (backend != null) {
             c.attach(backend);
@@ -109,7 +134,11 @@ public final class BridgeService implements Runnable {
         if (log == null) {
             return;
         }
-        LOCK.removeListener(LOCK_LOGGER);
+        stopApi();
+        if (authority != null) {
+            authority.dispose();
+            authority = null;
+        }
         if (c != null) {
             c.detach();
             log.append(LogRecord.Kind.SESSION, LogRecord.Src.BRIDGE, c.sessionData("bridge_stop"));
@@ -119,26 +148,39 @@ public final class BridgeService implements Runnable {
         capture = null;
     }
 
-    private static final Consumer<BridgeLock.State> LOCK_LOGGER = state -> {
+    /** Starts the local API (needs UGS's backend). A failure is logged; capture keeps running without it. */
+    static synchronized void startApi(BackendAPI backend) {
         SessionLog log = sessionLog;
-        if (log != null) {
-            log.append(LogRecord.Kind.AUTHORITY, LogRecord.Src.OPERATOR,
-                    authorityData(state, state == BridgeLock.State.LOCKED ? "operator locked Claude access" : "operator unlocked Claude access",
-                            LogRecord.Src.OPERATOR));
+        if (log == null || backend == null || apiHost != null) {
+            return;
         }
-    };
+        try {
+            BackendMachineLink link = new BackendMachineLink(backend, ORIGINS, capture);
+            ApiHost host = new ApiHost(log.home(), log, authority, link, new SwingOperatorPrompts(), Notifier::lookup);
+            host.start();
+            machineLink = link;
+            apiHost = host;
+            PendantWatch pw = new PendantWatch(backend, host.port());
+            pw.start();
+            pendantWatch = pw;
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "ugs-bridge API failed to start", e);
+        }
+    }
 
-    /**
-     * {@code authority} record data. Until authority levels exist (later package) the level is {@code observe}
-     * when locked and {@code query} when unlocked (unlocking never arms Motion/Stream, SPEC §4.3).
-     */
-    static JsonObject authorityData(BridgeLock.State state, String reason, String by) {
-        JsonObject d = new JsonObject();
-        d.addProperty("locked", state == BridgeLock.State.LOCKED);
-        d.addProperty("level", state == BridgeLock.State.LOCKED ? "observe" : "query");
-        d.addProperty("reason", reason);
-        d.addProperty("by", by);
-        return d;
+    private static void stopApi() {
+        if (pendantWatch != null) {
+            pendantWatch.stop();
+            pendantWatch = null;
+        }
+        if (apiHost != null) {
+            apiHost.close();
+            apiHost = null;
+        }
+        if (machineLink != null) {
+            machineLink.dispose();
+            machineLink = null;
+        }
     }
 
     /** Closes the session log when the application exits. */

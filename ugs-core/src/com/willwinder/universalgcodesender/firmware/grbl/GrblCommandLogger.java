@@ -73,7 +73,8 @@ public class GrblCommandLogger extends DefaultControllerListener {
             messageType = MessageType.VERBOSE;
         }
 
-        messageService.dispatchMessage(messageType, ">>> " + StringUtils.trimToEmpty(command.getCommandString()) + "\n");
+        String prefix = command.getOrigin() == null ? "" : "[" + command.getOrigin() + "] ";
+        messageService.dispatchMessage(messageType, prefix + ">>> " + StringUtils.trimToEmpty(command.getCommandString()) + "\n");
     }
 
     private void logInfoMessage(GcodeCommand command) {

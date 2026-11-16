@@ -175,4 +175,15 @@ public class GrblCommandLoggerTest {
 
         Mockito.verify(messageService, Mockito.times(1)).dispatchMessage(eq(MessageType.INFO), eq(">>> test\n"));
     }
+
+    @Test
+    public void commandSentWithOriginShouldPrefixTheEcho() {
+        GrblCommandLogger logger = new GrblCommandLogger(messageService);
+
+        GrblCommand command = new GrblCommand("G0 X1");
+        command.setOrigin("claude");
+        logger.commandSent(command);
+
+        Mockito.verify(messageService, Mockito.times(1)).dispatchMessage(eq(MessageType.INFO), eq("[claude] >>> G0 X1\n"));
+    }
 }

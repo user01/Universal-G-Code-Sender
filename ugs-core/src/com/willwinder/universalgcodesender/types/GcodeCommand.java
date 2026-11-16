@@ -95,6 +95,12 @@ public class GcodeCommand {
      */
     private boolean isImmediate = false;
 
+    /**
+     * Who asked for this command, when it wasn't the operator or UGS itself (for example "claude" for commands
+     * sent through the ugs-bridge API). Null for normal commands. Command loggers prefix the console echo with it.
+     */
+    private String origin;
+
     public GcodeCommand(String command) {
         this(command, -1);
     }
@@ -257,6 +263,22 @@ public class GcodeCommand {
      */
     public void setImmediate(boolean isImmediate) {
         this.isImmediate = isImmediate;
+    }
+
+    /**
+     * @return who asked for this command (e.g. "claude"), or null for the operator's and UGS's own commands
+     */
+    public String getOrigin() {
+        return origin;
+    }
+
+    /**
+     * Tags the command with who asked for it; the console echo becomes {@code [origin] >>> command}.
+     *
+     * @param origin a short tag such as "claude", or null to clear it
+     */
+    public void setOrigin(String origin) {
+        this.origin = origin;
     }
 
     public void setDone(boolean isDone) {

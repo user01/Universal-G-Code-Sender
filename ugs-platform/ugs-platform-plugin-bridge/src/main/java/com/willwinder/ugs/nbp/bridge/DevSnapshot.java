@@ -67,6 +67,7 @@ final class DevSnapshot {
             try (DirectoryStream<Path> requests = Files.newDirectoryStream(root, "*.request")) {
                 for (Path req : requests) {
                     String name = req.getFileName().toString().replaceFirst("\\.request$", "");
+                    prepare(Files.readString(req));
                     capture(root.resolve(name + ".png"));
                     Files.deleteIfExists(req);
                 }
@@ -80,6 +81,33 @@ final class DevSnapshot {
         }
     }
 
+    /**
+     * Optional words in the request file: {@code close-dialogs} closes open dialogs except the bridge's own
+     * ("Claude: ..."); {@code panel} brings the Claude Bridge panel to the front.
+     */
+    static void prepare(String directives) throws Exception {
+        if (directives == null || directives.isBlank()) {
+            return;
+        }
+        SwingUtilities.invokeAndWait(() -> {
+            if (directives.contains("close-dialogs")) {
+                for (java.awt.Window w : java.awt.Window.getWindows()) {
+                    if (w instanceof java.awt.Dialog d && d.isShowing() && (d.getTitle() == null || !d.getTitle().startsWith("Claude"))) {
+                        d.dispose();
+                    }
+                }
+            }
+            if (directives.contains("panel")) {
+                org.openide.windows.TopComponent tc = WindowManager.getDefault().findTopComponent("BridgeTopComponent");
+                if (tc != null) {
+                    tc.open();
+                    tc.requestActive();
+                }
+            }
+        });
+        Thread.sleep(700); // let the window system lay out and repaint
+    }
+
     static void capture(Path out) throws Exception {
         AtomicReference<BufferedImage> image = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> {
@@ -90,6 +118,19 @@ final class DevSnapshot {
             Graphics2D g = img.createGraphics();
             try {
                 frame.paint(g);
+                // dialogs (e.g. the bridge's $H confirmation) are separate windows: paint them at their position
+                for (java.awt.Window win : java.awt.Window.getWindows()) {
+                    if (win != frame && win.isShowing() && win instanceof java.awt.Dialog) {
+                        java.awt.Point p = win.getLocationOnScreen();
+                        java.awt.Point f = frame.getLocationOnScreen();
+                        Graphics2D gd = (Graphics2D) g.create(p.x - f.x, p.y - f.y, win.getWidth(), win.getHeight());
+                        try {
+                            win.paint(gd);
+                        } finally {
+                            gd.dispose();
+                        }
+                    }
+                }
             } finally {
                 g.dispose();
             }

@@ -18,6 +18,8 @@
  */
 package com.willwinder.ugs.nbp.bridge;
 
+import com.willwinder.ugs.nbp.bridge.ui.AuthorityPanel;
+import com.willwinder.ugs.nbp.bridge.ui.PadlockIcon;
 import com.willwinder.ugs.nbp.lib.Mode;
 import com.willwinder.ugs.nbp.lib.services.LocalizingService;
 import org.openide.awt.ActionID;
@@ -53,6 +55,7 @@ public final class BridgeTopComponent extends TopComponent {
         row.add(lockButton);
         row.add(stateLabel);
         add(row, BorderLayout.NORTH);
+        add(new AuthorityPanel(), BorderLayout.CENTER); // package E/F: levels, expiry, Claude's requests, API, pendant
         lockButton.addActionListener(e -> {
             BridgeLock lock = BridgeService.lock();
             if (lock.isLocked()) {
@@ -78,6 +81,7 @@ public final class BridgeTopComponent extends TopComponent {
         boolean locked = BridgeService.lock().isLocked();
         lockButton.setSelected(!locked);
         lockButton.setText(locked ? "Unlock Claude access" : "Lock Claude access");
-        stateLabel.setText(locked ? "MCP: locked" : "MCP: unlocked (Observe/Query)");
+        lockButton.setIcon(new PadlockIcon(locked, 16));
+        stateLabel.setText(locked ? "MCP: locked" : "MCP: unlocked");
     }
 }

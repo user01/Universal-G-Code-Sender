@@ -6,6 +6,7 @@
 #                                        its own UGS settings, NetBeans userdir and bridge folder; never the installed app's
 #                                        touch bridge/.dev-home/snapshots/<name>.request → <name>.png of the main window
 #   bridge/scripts/dev.sh run-sim        start bridge/sim on a loopback port, then the dev UGS connected to it over TCP
+#                                        (extra args go to the app, e.g. -J-Dugs.bridge.dev.unlock=true -J-Dugs.bridge.dev.level=motion)
 #   bridge/scripts/dev.sh test <module>  run tests for one module, e.g. ugs-core
 #   bridge/scripts/dev.sh mvn <args…>    any other Maven invocation
 set -euo pipefail
@@ -32,7 +33,7 @@ case "${1:-}" in
     PORT=$(sed -n 's/^LISTENING 127.0.0.1:\([0-9]*\).*/\1/p' "$LOG" | head -1)
     [ -n "$PORT" ] || { echo "simulator did not start; see $LOG"; exit 1; }
     echo "simulator on 127.0.0.1:$PORT (log $LOG)"
-    "$0" run -J-Dugs.bridge.dev.connect="127.0.0.1:$PORT" ;;
+    "$0" run -J-Dugs.bridge.dev.connect="127.0.0.1:$PORT" "${@:2}" ;;
   test)         shift; ./mvnw -B test -pl "${1:?module path}" ;;
   mvn)          shift; ./mvnw "$@" ;;
   *)            sed -n '2,8p' "$0"; exit 1 ;;

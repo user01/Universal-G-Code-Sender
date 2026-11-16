@@ -18,10 +18,11 @@
  */
 package com.willwinder.ugs.nbp.bridge;
 
+import com.willwinder.ugs.nbp.bridge.api.Authority;
+import com.willwinder.ugs.nbp.bridge.api.Level;
 import com.willwinder.universalgcodesender.connection.ConnectionDriver;
 import com.willwinder.universalgcodesender.model.BackendAPI;
 
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -30,6 +31,8 @@ import java.util.logging.Logger;
  */
 final class DevConnect {
     static final String PROPERTY = "ugs.bridge.dev.connect";
+    static final String UNLOCK_PROPERTY = "ugs.bridge.dev.unlock";
+    static final String LEVEL_PROPERTY = "ugs.bridge.dev.level";
     private static final Logger LOGGER = Logger.getLogger(DevConnect.class.getName());
 
     private DevConnect() {
@@ -71,10 +74,44 @@ final class DevConnect {
                 backend.connect(backend.getSettings().getFirmwareVersion(), "127.0.0.1", port);
                 LOGGER.info(() -> "dev connect: TCP 127.0.0.1:" + port);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "dev connect to 127.0.0.1:" + port + " failed", e);
+                LOGGER.log(java.util.logging.Level.WARNING, "dev connect to 127.0.0.1:" + port + " failed", e);
             }
         }, "ugs-bridge-dev-connect");
         t.setDaemon(true);
         t.start();
+    }
+
+    /**
+     * Development only: starts with Claude access unlocked (and optionally at {@code -Dugs.bridge.dev.level}) when
+     * {@code -Dugs.bridge.dev.unlock=true} is set <em>together with</em> a valid loopback
+     * {@code -Dugs.bridge.dev.connect}, i.e. only in {@code dev.sh run-sim} against the simulator. Never in a
+     * normal launch. Logged loudly, in the UGS log and as an {@code authority} record by the bridge.
+     *
+     * @return true if it unlocked
+     */
+    static boolean maybeUnlock(BridgeLock lock, Authority authority) {
+        return maybeUnlock(System.getProperty(PROPERTY), System.getProperty(UNLOCK_PROPERTY), System.getProperty(LEVEL_PROPERTY),
+                authority);
+    }
+
+    static boolean maybeUnlock(String connect, String unlock, String level, Authority authority) {
+        if (!"true".equals(unlock) || authority == null) {
+            return false;
+        }
+        if (loopbackPort(connect) < 0) {
+            LOGGER.warning(() -> "Ignoring " + UNLOCK_PROPERTY + ": only honored together with " + PROPERTY + "=127.0.0.1:<port>");
+            return false;
+        }
+        LOGGER.warning(() -> "DEVELOPMENT: Claude access starts UNLOCKED (" + UNLOCK_PROPERTY + ", simulator " + connect + ")");
+        authority.unlockForDevelopment("DEVELOPMENT ONLY: unlocked at launch by -D" + UNLOCK_PROPERTY + " (simulator " + connect + ")");
+        if (level != null && !level.isBlank()) {
+            try {
+                Level l = Level.parse(level);
+                authority.setLevel(l, "bridge", "DEVELOPMENT ONLY: level " + l.id() + " set at launch by -D" + LEVEL_PROPERTY);
+            } catch (IllegalArgumentException e) {
+                LOGGER.warning(() -> "Ignoring " + LEVEL_PROPERTY + "=" + level);
+            }
+        }
+        return true;
     }
 }
