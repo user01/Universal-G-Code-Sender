@@ -975,6 +975,8 @@ class FakeBridge:
             line = 120
         wco = js.get("wco") or list(self._wco)
         cur = list(self._wco)
+        last = js.get("last_mpos")
+        x, y = (last[0] - wco[0], last[1] - wco[1]) if last else (10.0, 20.0)
         origin_ok = all(abs(a - b) < 0.01 for a, b in zip(wco, cur, strict=True))
         requires: list[str] = []
         if not self.homed:
@@ -1024,7 +1026,7 @@ class FakeBridge:
             "preamble": [
                 "G21 G53 G0 Z-5",
                 "G21 G90 G17 G94 G54",
-                "G0 X10 Y20",
+                f"G0 X{x:.3f} Y{y:.3f}",
                 "G0 Z5",
                 "M3",
                 "G4 P2.0",

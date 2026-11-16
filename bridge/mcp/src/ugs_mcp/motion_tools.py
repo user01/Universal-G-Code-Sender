@@ -13,6 +13,7 @@ still accepts G-code, or with a soft reset when it is in alarm (G-code is locked
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -345,7 +346,9 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
             raise ToolError("retract must be >= 0")
         lines = [f"G21 G91 G38.2 {ax}{fmt_num(sign * max_distance)} F{fmt_num(feed)}"]
         if retract > 0:
-            lines.append(f"G0 {ax}{fmt_num(-sign * retract)}")
+            # Z retracts are rapids; X/Y retracts (inside a bore, below safe Z) are fed.
+            back = f"{ax}{fmt_num(-sign * retract)}"
+            lines.append(f"G0 {back}" if ax == "Z" else f"G1 {back} F{fmt_num(feed)}")
         lines.append("G90")
         exp = expect or f"probe {spec} within {fmt_num(max_distance)} mm"
         check, machine, limits = await mo.checked(lines, expect=exp)
@@ -360,7 +363,15 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
                 f"Contact at machine {_xyz((px, py, pz))} (work {_xyz(work)} with the current"
                 f" WCO {_xyz(wco)})."
             )
-            if ax == "Z" and limits.plate_thickness is not None:
+            bs = limits.bitsetter_xy
+            at_setter = bs is not None and math.hypot(px - bs[0], py - bs[1]) <= 5.0
+            if ax == "Z" and at_setter and bs is not None:
+                extra.append(
+                    f"This is the BitSetter position (profile X{fmt_num(bs[0])} Y{fmt_num(bs[1])},"
+                    f" assumed; ledger B6): tool trigger at machine Z {fmt_num(pz)}. Re-measuring"
+                    " the same tool should repeat within 0.05 mm (ledger B8)."
+                )
+            elif ax == "Z" and limits.plate_thickness is not None:
                 status = "verified" if limits.plate_verified else "sourced, NOT measured"
                 plate = limits.plate_thickness
                 extra.append(

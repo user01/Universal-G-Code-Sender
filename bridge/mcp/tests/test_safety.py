@@ -274,6 +274,15 @@ def test_diagonal_rapid_down_from_safe_z_is_refused() -> None:
     assert _check(["G53 G0 X-300 Y-370"], machine=at_safe).ok
 
 
+def test_envelope_reported_once_and_advisory_mode() -> None:
+    preamble = ["G21 G53 G0 Z-5", "G21 G90 G17 G94 G54", "G0 X10 Y20", "G0 Z5", "M3", "G4 P2"]
+    origin_zero = replace(HOMED, wco=(0.0, 0.0, 0.0), homed=False, state="Alarm")
+    c = check_motion(preamble, origin_zero, LIMITS, expect=None, allow_spindle=True, advisory=True)
+    flagged = [(r.line, r.message.split(" mm")[0][-20:]) for r in c.refusals]
+    assert [r.rule for r in c.refusals] == ["envelope", "envelope", "envelope"]
+    assert [ln for ln, _ in flagged] == [3, 3, 4]  # X and Y on line 3, Z on line 4 only
+
+
 def test_retract_near_top_is_refused() -> None:
     near_top = replace(HOMED, mpos=(-300.0, -370.0, -1.0))
     c = _check(["G91 G38.2 Z-5 F100", "G0 Z2", "G90"], machine=near_top)

@@ -207,6 +207,8 @@ async def test_bitsetter_probe_and_tool_change_delta(sim_fake: FakeBridge, home:
         text, err = await _call(client, "probe", {"axis": "Z", "max_distance": 25, "feed": 200})
         assert not err, text
         assert f"Z{BITSETTER_CONTACT_Z:g}" in text.split("Contact at machine")[1]
+        assert "This is the BitSetter position (profile X-4 Y-449, assumed; ledger B6)" in text
+        assert "BitZero" not in text
 
         # The operator installs a 12.5 mm longer tool: its tip now rests on the button.
         sim_fake.sim.swap_tool(52.5)
@@ -412,12 +414,19 @@ async def test_job_state_plan_and_start_resume(
         assert "Requires: home, tool_measure." in text
         assert "[NO ] homed: not homed" in text
         assert "  G21 G53 G0 Z-5" in text
-        assert "my check: line 3 'G0 X10 Y20'" in text  # +10 X is outside the envelope
+        assert "  G0 X-212.400 Y-301.000" in text  # back to where the journal stopped
+        assert "my check: line 3" not in text
+        # The live WCO is X0 Y0 Z0 (nothing probed yet), so the clearance move is above Z0.
+        assert "my check: line 4 'G0 Z5': this move could reach machine Z 5 mm" in text
         assert "start_resume('p-1')" in text
 
+        # Without a last position the canned plan returns to X10 Y20 (work), which with
+        # WCO X0 Y0 is outside the envelope: the advisory check of the preamble says so.
+        sim_fake.job_state = {k: v for k, v in JOURNAL.items() if k != "last_mpos"}
         text, err = await _call(client, "plan_resume", {"target": "OP 05"})
         assert not err
         assert "{'operation': 5}" in text
+        assert "my check: line 3 'G0 X10.000 Y20.000': this move could reach machine X 10" in text
 
         text, err = await _call(client, "start_resume", {"plan_id": "p-1"})
         assert err

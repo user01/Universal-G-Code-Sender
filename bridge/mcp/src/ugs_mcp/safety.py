@@ -262,6 +262,7 @@ class Limits:
     plate_thickness: float | None = None
     plate_verified: bool = False
     plate_source: str | None = None
+    bitsetter_xy: tuple[float, float] | None = None
     source: str = "profile"
     assumptions: list[str] = field(default_factory=list)
     """Unverified profile values the checks rely on (machine ledger ids)."""
@@ -322,12 +323,20 @@ class Limits:
             plate_thickness=float(plate) if isinstance(plate, int | float) else None,
             plate_verified=bool(bz.get("plate_thickness_verified")),
             plate_source=str(bz.get("plate_thickness_source") or "") or None,
+            bitsetter_xy=_xy(bs.get("xy")),
             source=source or "profile",
             assumptions=assumptions,
         )
 
 
 Vec3 = tuple[float, float, float]
+
+
+def _xy(v: Any) -> tuple[float, float] | None:
+    try:
+        return (float(v[0]), float(v[1]))
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def _vec(v: Any) -> Vec3 | None:
@@ -470,6 +479,10 @@ def _exact(span: Span, axis: int) -> float | None:
     return lo if abs(hi - lo) < EPS else None
 
 
+def _ends(span: Span) -> tuple[Vec3, Vec3]:
+    return (span[0][0], span[1][0], span[2][0]), (span[0][1], span[1][1], span[2][1])
+
+
 def _hull(a: Span, b: Span) -> tuple[Vec3, Vec3]:
     lo = [min(a[i][0], b[i][0]) for i in range(3)]
     hi = [max(a[i][1], b[i][1]) for i in range(3)]
@@ -490,11 +503,20 @@ class _Ctx:
         self.span: Span | None = [[v, v] for v in machine.mpos] if machine.mpos else None
         self.wco: list[float] | None = list(machine.wco) if machine.wco else None
 
-    def in_envelope(self, n: int, lo: Sequence[float], hi: Sequence[float], what: str) -> None:
+    def in_envelope(
+        self,
+        n: int,
+        lo: Sequence[float],
+        hi: Sequence[float],
+        what: str,
+        axes: Sequence[int] = (0, 1, 2),
+    ) -> None:
+        """Refuse if [lo, hi] leaves the envelope on any of ``axes`` (the axes this line
+        moves; the others were checked when they last moved)."""
         env = self.lim.envelope
         if env is None:
             return
-        for i in range(3):
+        for i in axes:
             bad = None
             if lo[i] < env.lo[i] - EPS:
                 bad = lo[i]
@@ -774,13 +796,17 @@ def _line(ctx: _Ctx, n: int, raw: str, *, allow_spindle: bool) -> None:
             return
         lo, hi, length = box
         kind = "arc"
+        ctx.in_envelope(n, lo, hi, "this arc")
     else:
+        # A straight move between two points inside the (convex) envelope stays inside it;
+        # the start was checked by the line before (or is where the machine is now).
         lo, hi = _hull(start, target)
         length = math.dist([s[0] for s in start], [t[0] for t in target])
         kind = "rapid" if md.motion == "G0" else "feed"
         if kind == "rapid":
             ctx.low_rapid(n, start, target, {i for i, v in enumerate(axes) if v is not None})
-    ctx.in_envelope(n, lo, hi, "this move")
+        moved = [i for i, v in enumerate(axes) if v is not None]
+        ctx.in_envelope(n, *_ends(target), "this move", moved)
     rate = None if kind == "rapid" or md.feed_mode == "G93" else md.feed
     c.moves.append(Planned(n, kind, lo, hi, length, rate))
     ctx.span = target
@@ -916,7 +942,7 @@ def _probe(
     target = [list(a) for a in start]
     target[axis] = [start[axis][0] + mm, start[axis][1] + mm]
     lo, hi = _hull(start, target)
-    ctx.in_envelope(n, lo, hi, "the probe")
+    ctx.in_envelope(n, *_ends(target), "the probe", [axis])
     c.moves.append(Planned(n, "probe", lo, hi, abs(mm), ctx.modal.feed))
     # Contact can happen anywhere between the start and the probe target.
     after = [list(a) for a in start]
@@ -1041,7 +1067,7 @@ def _jog(ctx: _Ctx, n: int, body: str) -> None:
     if target is None:
         return
     lo, hi = _hull(start, target)
-    ctx.in_envelope(n, lo, hi, "the jog")
+    ctx.in_envelope(n, *_ends(target), "the jog", [i for i, v in enumerate(axes) if v is not None])
     length = math.dist([s[0] for s in start], [t[0] for t in target])
     c.moves.append(Planned(n, "jog", lo, hi, length, feed * scale))
     ctx.span = target
