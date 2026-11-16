@@ -27,6 +27,7 @@ export class ToolpathLayer {
     this.clipPlanes = [];
     this.opVisible = [];
     this.classVisible = { cut: true, plunge: true, rapid: true, warn: true };
+    this.scrubToolEnabled = true; // the tool at the scrub position (off in live mode)
   }
 
   /**
@@ -118,6 +119,7 @@ export class ToolpathLayer {
     this.group.add(this.highlight);
 
     this.setClip(this.clipPlanes);
+    if (this.dim) this.setDim(true);
   }
 
   _add(buf, op, cls, material) {
@@ -160,7 +162,20 @@ export class ToolpathLayer {
     this.toolCone.scale.set(d / 2, len, d / 2);
     this.toolCone.position.set(0, 0, len / 2);
     this.toolMarker.position.set(...p);
-    this.toolMarker.visible = maxSeg < seg.count - 1;
+    this.toolMarker.visible = this.scrubToolEnabled && maxSeg < seg.count - 1;
+  }
+
+  /** Dim the program path (live mode), so the live trail stands out. */
+  setDim(on) {
+    this.dim = on;
+    for (const r of this.objects) {
+      if (r.cls === 'warn') continue;
+      const m = r.obj.material;
+      if (m.userData.baseOpacity === undefined) m.userData.baseOpacity = m.opacity;
+      m.transparent = true;
+      m.opacity = on ? m.userData.baseOpacity * 0.3 : m.userData.baseOpacity;
+      m.needsUpdate = true;
+    }
   }
 
   /** World-space clipping planes for all toolpath materials. */

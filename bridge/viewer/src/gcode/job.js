@@ -3,7 +3,7 @@
 //
 // Precedence: sidecar > post headers > derived from the toolpath.
 
-import { KIND } from './parser.js';
+import { KIND, splitComments } from './parser.js';
 import { toolId, toolNum, zeroOrigin } from './header.js';
 
 /**
@@ -33,6 +33,7 @@ export function buildJob({ program, header, sidecar = null }) {
 
   const ops = buildOperations({ program, header, sidecar });
   const opOfSeg = assignSegmentsToOps(program, ops);
+  const issues = jobIssues(program, ops);
 
   // --- stock ---------------------------------------------------------------------------
   let stock = null;
@@ -77,6 +78,7 @@ export function buildJob({ program, header, sidecar = null }) {
     tools,
     ops,
     opOfSeg,
+    issues,
     stock,
     floor,
     clearance,
@@ -101,15 +103,29 @@ export function stockBox(size, origin = 'front-left-top') {
 }
 
 /**
- * Operations as [{index, name, tool (num|null), desc, lineStart, lineEnd, source}], in file order.
- * Lines are 1-based and inclusive. Lines before the first operation are not in any operation.
+ * Operations as [{index, name, tool (num|null), toolInGcode?, desc, lineStart, lineEnd, source}], in
+ * file order. Lines are 1-based and inclusive. Lines outside every operation (the header, and the
+ * tool-change block between two operations: decision D11) belong to no operation.
+ *
+ * Follows bridge/docs/post-headers.md §4 and its reference implementation
+ * (bridge/mcp/src/ugs_mcp/gcode/job.py `operations`): an operation runs from its marker to the line
+ * before the next marker, or before the first M6 after its first motion line, whichever comes
+ * first; then its end moves back over blank and comment-only lines.
  */
 export function buildOperations({ program, header, sidecar }) {
   const n = program.lineCount;
+  const moves = program.moveLines ?? Int32Array.from(new Set(program.seg.line));
+  const m6Lines = program.toolChanges.map((tc) => tc.line);
+  const firstMoveFrom = (line) => { const i = lowerBound(moves, line); return i < moves.length ? moves[i] : null; };
   const toolAtLine = (line) => {
+    if (line === null) return null;
     let t = null;
     for (const tc of program.toolChanges) { if (tc.line <= line) t = tc.tool; else break; }
     return t;
+  };
+  const trimEnd = (start, end) => {
+    while (end > start && !hasCode(program.lines[end - 1])) end--;
+    return end;
   };
 
   if (sidecar?.operations?.length) {
@@ -121,50 +137,89 @@ export function buildOperations({ program, header, sidecar }) {
 
   let markers = header.opMarkers;
   if (markers.length && markers[0].style === 'freecad') {
-    // FreeCAD: (Begin operation: X) … (Finish operation: X). Drop ops with no motion (tool controllers, fixtures).
-    const ends = header.opEnds;
+    // FreeCAD: (Begin operation: X) runs to the next Begin. Ops with no motion (tool controllers, fixtures) are dropped.
     const ops = [];
-    for (const mk of markers) {
-      const end = ends.find((e) => e.line > mk.line && e.name === mk.name);
-      const lineEnd = end ? end.line : n;
-      if (!hasMotion(program, mk.line, lineEnd)) continue;
-      ops.push({ index: ops.length + 1, name: mk.name, tool: toolAtLine(mk.line), desc: '', lineStart: mk.line, lineEnd, source: 'header' });
-    }
+    markers.forEach((mk, i) => {
+      const next = i + 1 < markers.length ? markers[i + 1].line : n + 1;
+      const first = firstMoveFrom(mk.line);
+      if (first === null || first >= next) return;
+      ops.push({ index: ops.length + 1, name: mk.name, tool: toolAtLine(first), desc: '', lineStart: mk.line, lineEnd: trimEnd(mk.line, next - 1), source: 'header' });
+    });
     if (ops.length) return ops;
     markers = [];
   }
 
   if (markers.length) {
     return markers.map((mk, i) => {
-      const lineEnd = i + 1 < markers.length ? markers[i + 1].line - 1 : n;
+      const first = firstMoveFrom(mk.line);
+      let boundary = i + 1 < markers.length ? markers[i + 1].line : n + 1;
+      if (first !== null) {
+        const m6 = m6Lines.find((l) => l > first && l < boundary);
+        if (m6 !== undefined) boundary = m6;
+      }
       const planned = header.plannedOps.find((p) => p.index === mk.index);
-      return {
+      const loaded = toolAtLine(first); // the tool in the spindle at the op's first move
+      const tool = mk.tool ?? planned?.tool ?? loaded;
+      const op = {
         index: mk.index,
-        name: mk.name,
-        tool: mk.tool ?? planned?.tool ?? toolAtLine(mk.line),
+        name: mk.name || planned?.name || mk.desc || `op${String(mk.index).padStart(2, '0')}`,
+        tool,
         desc: mk.desc || planned?.desc || '',
         lineStart: mk.line,
-        lineEnd,
+        lineEnd: trimEnd(mk.line, boundary - 1),
         source: 'header',
       };
+      if (loaded !== null && tool !== null && loaded !== tool) op.toolInGcode = loaded;
+      return op;
     });
   }
 
-  // Fallback: one operation per tool (split at each M6), or the whole file.
+  // Fallback: one operation per M6 segment (motion before the first M6 is its own segment), or the whole file.
   const tcs = program.toolChanges;
-  if (tcs.length) {
-    return tcs.map((tc, i) => ({
-      index: i + 1, name: `${toolId(tc.tool)} (M6 at line ${tc.line})`, tool: tc.tool, desc: 'split at tool changes (no operation headers)',
-      lineStart: i === 0 ? 1 : tc.line, lineEnd: i + 1 < tcs.length ? tcs[i + 1].line - 1 : n, source: 'gcode',
-    }));
-  }
-  return [{ index: 1, name: 'program', tool: program.finalState.tool, desc: 'no operation headers', lineStart: 1, lineEnd: n, source: 'gcode' }];
+  const starts = tcs.length && tcs[0].line === 1 ? m6Lines : [1, ...m6Lines];
+  const ops = [];
+  starts.forEach((start, i) => {
+    const next = i + 1 < starts.length ? starts[i + 1] : n + 1;
+    const first = firstMoveFrom(start);
+    if (first === null || first >= next) return;
+    const tool = toolAtLine(first);
+    ops.push({
+      index: ops.length + 1,
+      name: tcs.length ? (tool !== null ? `${toolId(tool)} (from line ${start})` : `no tool (lines ${start}–)`) : 'program',
+      tool,
+      desc: tcs.length ? 'split at tool changes (no operation headers)' : 'no operation headers',
+      lineStart: start,
+      lineEnd: trimEnd(start, next - 1),
+      source: 'gcode',
+    });
+  });
+  return ops;
 }
 
-function hasMotion(program, a, b) {
-  const L = program.seg.line;
-  for (let i = 0; i < L.length; i++) if (L[i] >= a && L[i] <= b) return true;
-  return false;
+/**
+ * Job-level findings that aren't tied to one segment (post-headers.md §3, §4): an M6 with no T word
+ * since the previous M6, and an op marker whose tool differs from the tool loaded at its first move.
+ * @returns {{kind:string,line:number,msg:string}[]}
+ */
+export function jobIssues(program, ops) {
+  const out = [];
+  for (const tc of program.toolChanges) {
+    if (tc.hasT === false) out.push({ kind: 'm6_no_t', line: tc.line, msg: `M6 without a T word since the previous tool change${tc.tool !== null ? ` (would load ${toolId(tc.tool)} again)` : ''}` });
+  }
+  for (const op of ops) {
+    if (op.toolInGcode !== undefined) out.push({ kind: 'tool_mismatch', line: op.lineStart, msg: `OP ${String(op.index).padStart(2, '0')} ${op.name}: marker says ${toolId(op.tool)}, but ${toolId(op.toolInGcode)} is loaded at its first move` });
+  }
+  return out;
+}
+
+function hasCode(raw) {
+  return raw !== undefined && splitComments(raw).code.trim() !== '';
+}
+
+function lowerBound(arr, v) { // first index with arr[i] >= v
+  let lo = 0, hi = arr.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < v) lo = m + 1; else hi = m; }
+  return lo;
 }
 
 /** Int16Array: operation index (0-based into ops) for each segment, or -1. */
@@ -230,8 +285,8 @@ export const WARN = Object.freeze({ BELOW_FLOOR: 1, OUTSIDE_ENVELOPE: 2 });
 export function analyzeWarnings({ program, job, wco, envelope, eps = 0.01 }) {
   const { count, pos, kind, line } = program.seg;
   const flags = new Uint8Array(count);
-  const items = [];
-  const counts = { belowFloor: 0, outsideEnvelope: 0 };
+  const items = (job.issues ?? []).slice(); // job-level findings first (M6 without T, tool mismatch)
+  const counts = { belowFloor: 0, outsideEnvelope: 0, other: items.length };
   const floorZ = job.floor?.z;
   const lastLine = { floor: -1, env: -1 };
   for (let i = 0; i < count; i++) {

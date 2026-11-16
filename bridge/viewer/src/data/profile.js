@@ -22,6 +22,7 @@ export const BUILTIN_PROFILE = {
  * @property {number} [safeZ]
  * @property {number[]} [toolChangePark]
  * @property {{xy:number[],verified:boolean}} [bitsetter]
+ * @property {number} [spoilboardZ]  profile `spoilboard_z_machine`, when measured
  * @property {string} source
  */
 
@@ -36,6 +37,8 @@ export function normalizeProfile(raw, source) {
     safeZ: raw.safe_z_machine,
     toolChangePark: raw.tool_change_park,
     bitsetter: raw.bitsetter?.xy ? { xy: raw.bitsetter.xy.slice(), verified: !!raw.bitsetter.verified } : undefined,
+    // machine Z of the spoilboard surface (reference tool); null/absent until measured
+    spoilboardZ: typeof raw.spoilboard_z_machine === 'number' ? raw.spoilboard_z_machine : undefined,
     source,
   };
 }
@@ -54,15 +57,20 @@ export async function loadDefaultProfile(fetchImpl = fetch) {
   return normalizeProfile(BUILTIN_PROFILE, 'built-in');
 }
 
+/** Machine Z of the spoilboard: the profile's `spoilboard_z_machine`, else assumed 10 mm above the lowest Z. */
+export function spoilboardZ(p) {
+  return p.spoilboardZ ?? p.envelope.min[2] + 10;
+}
+
 /**
  * Default offline work offset (WCO, machine = work + wco): stock front-left 20 mm in from the
- * envelope's front-left corner, stock bottom on an assumed spoilboard 10 mm above the lowest Z.
+ * envelope's front-left corner, stock bottom on the spoilboard (`spoilboardZ`).
  * @param {MachineProfile} p
  * @param {{min:number[],max:number[]}|null} stockBox  work coords
  */
 export function defaultWorkOffset(p, stockBox) {
   const { min } = p.envelope;
-  const spoilZ = min[2] + 10;
+  const spoilZ = spoilboardZ(p);
   const sx = stockBox ? stockBox.min[0] : 0;
   const sy = stockBox ? stockBox.min[1] : 0;
   const sz = stockBox ? stockBox.min[2] : -10;

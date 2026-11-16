@@ -67,6 +67,7 @@ export function initialState() {
     coolant: 9,
     tool: null, // tool currently in the spindle (after M6)
     selectedTool: null, // last T word
+    tSinceM6: false, // a T word was seen since the previous M6 (post-headers.md §3)
     pos: [0, 0, 0], // work coordinates, mm
     known: [false, false, false],
     ended: false,
@@ -76,7 +77,7 @@ export function initialState() {
 /**
  * Stateful interpreter. Call `exec(text, lineNo)` for each line; segments go to `sink`.
  * `sink` methods (all optional): seg(x0,y0,z0,x1,y1,z1,kind,flags,line,feed),
- * toolChange({line, tool, pos}), dwell(seconds, line), note({line, msg}).
+ * toolChange({line, tool, hasT, pos}), move(line), dwell(seconds, line), note({line, msg}).
  */
 export class GcodeInterpreter {
   constructor({ wco = [0, 0, 0], arcTolerance = 0.01, sink = {} } = {}) {
@@ -151,11 +152,14 @@ export class GcodeInterpreter {
       }
     }
 
-    if (tWord !== null) st.selectedTool = tWord;
+    if (tWord !== null) { st.selectedTool = tWord; st.tSinceM6 = true; }
     if (m6) {
       const tool = st.selectedTool;
+      const hasT = st.tSinceM6;
       st.tool = tool;
-      sink.toolChange?.({ line: lineNo, tool, pos: st.known.every(Boolean) ? st.pos.slice() : null });
+      st.tSinceM6 = false;
+      sink.toolChange?.({ line: lineNo, tool, hasT, pos: st.known.every(Boolean) ? st.pos.slice() : null });
+      if (!hasT) sink.note?.({ line: lineNo, msg: `M6 without a T word since the previous tool change${tool !== null ? ` (would load T${tool} again)` : ''}` });
     }
     if (motion !== null) st.motion = motion;
 
@@ -175,6 +179,7 @@ export class GcodeInterpreter {
     }
     if (!hasAxis) return;
     if (st.motion === 80) return;
+    if (!machine) sink.move?.(lineNo); // a motion line in work coordinates (like ugs_mcp's Program.moves)
 
     const scale = st.units === 'in' ? 25.4 : 1;
     const start = st.pos.slice();
@@ -285,7 +290,8 @@ class SegTable {
  * @property {string[]} lines  source lines; line numbers are 1-based (lines[n-1])
  * @property {number} lineCount
  * @property {{count:number,pos:Float32Array,line:Int32Array,kind:Uint8Array,flags:Uint8Array,feed:Float32Array,tEnd:Float32Array}} seg
- * @property {{line:number,tool:number|null,pos:number[]|null}[]} toolChanges
+ * @property {{line:number,tool:number|null,hasT:boolean,pos:number[]|null}[]} toolChanges  `hasT` false: M6 with no T word since the previous M6
+ * @property {Int32Array} moveLines  ascending lines with a motion command and axis words (not G53), drawable or not
  * @property {Float64Array} lineTime  estimated elapsed seconds at the end of each line (index = line number)
  * @property {number} totalTime  seconds
  * @property {{min:number[],max:number[]}|null} cutBounds  bounds of feed/arc moves (work)
@@ -298,6 +304,7 @@ export function parseGcode(text, { wco = [0, 0, 0], rapidRate = 5000, arcToleran
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
   const table = new SegTable(Math.max(1024, lines.length * 2));
   const toolChanges = [];
+  const moveLines = [];
   const notes = [];
   const lineTime = new Float64Array(lines.length + 2);
   let t = 0;
@@ -318,6 +325,7 @@ export function parseGcode(text, { wco = [0, 0, 0], rapidRate = 5000, arcToleran
       if (kind !== KIND.RAPID) { grow(cutMin, cutMax, x0, y0, z0); grow(cutMin, cutMax, x1, y1, z1); }
     },
     toolChange(tc) { toolChanges.push(tc); },
+    move(line) { if (moveLines[moveLines.length - 1] !== line) moveLines.push(line); },
     dwell(sec) { t += sec; },
     note(n) { if (notes.length < 200) notes.push(n); },
   };
@@ -333,6 +341,7 @@ export function parseGcode(text, { wco = [0, 0, 0], rapidRate = 5000, arcToleran
     lineCount: lines.length,
     seg: table.trim(),
     toolChanges,
+    moveLines: Int32Array.from(moveLines),
     lineTime,
     totalTime: t,
     cutBounds: bounds(cutMin, cutMax),

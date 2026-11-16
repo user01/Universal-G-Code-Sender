@@ -4,11 +4,11 @@
 // interface JobSource {
 //   kind: 'offline' | 'url' | 'live'
 //   load(): Promise<{ gcode: {name, text}|null, sidecar: object|null, profile: object|null }>
-//   subscribe?(onRecord): () => void      // live only: LogRecords from WS /events
-//   status?(): Promise<BridgeStatus>      // live only: GET /status
+//   connection?: LiveConnection           // live only: GET calls and WS /events (src/live/connection.js)
 // }
 
 import { isProfile } from './profile.js';
+import { LiveConnection } from '../live/connection.js';
 
 const GCODE_EXT = /\.(nc|gcode|ngc|tap|gc|cnc|txt)$/i;
 
@@ -50,9 +50,13 @@ export class UrlSource {
     let sidecar = null;
     if (this.sidecar) sidecar = checkSidecar(await get(this.sidecar, true), this.sidecar);
     else if (this.file) {
-      // try "<program>.job.json" next to the file; absence is fine
-      const guess = this.file.replace(/\.[^./]+$/, '') + '.job.json';
-      try { sidecar = checkSidecar(await get(guess, true), guess); } catch { sidecar = null; }
+      // D12: try "<stem>.job.json", then "<file>.nc.job.json" next to the file; absence is fine
+      for (const guess of sidecarCandidates(this.file)) {
+        let j;
+        try { j = await get(guess, true); } catch { continue; }
+        sidecar = checkSidecar(j, guess); // a sidecar that exists but is invalid is an error, not a silent skip
+        break;
+      }
     }
     const profile = this.profile ? await get(this.profile, true) : null;
     return { gcode, sidecar, profile };
@@ -60,41 +64,82 @@ export class UrlSource {
 }
 
 /**
- * Live source (V2 / package E): served by the plugin at /view/#vt=<token>; read-only viewer token
- * sent as `Authorization: Bearer v.<token>`. V1 implements the GET calls it can use offline-free
- * (profile, file info) and leaves streaming as a stub.
+ * Live source: the program, profile and job data from a running bridge (bridge/docs/api.md), with a
+ * read-only viewer token sent as `Authorization: Bearer v.<token>`. Two ways in:
+ *   /view/#vt=<token>                           served by the plugin (same origin)
+ *   ?live=http://127.0.0.1:<port>#vt=<token>    dev: viewer served elsewhere (the bridge must allow CORS)
+ * `vt` may also be a query parameter, but the hash keeps it out of server logs and Referer headers.
  */
 export class LiveSource {
   kind = 'live';
-  constructor({ base = '/api/bridge/v1', token }) { this.base = base; this.token = token; }
+  /** @param {{base?: string, token: string, origin?: string|null}} o */
+  constructor({ base = '/api/bridge/v1', token, origin = null }) {
+    this.base = base;
+    this.token = token;
+    this.origin = origin; // dev `?live=` origin, or null when same-origin
+    this.connection = new LiveConnection({ base, token, onRecord: () => {} });
+  }
 
-  /** From `location.hash` (`#vt=<token>`); null when not launched by the plugin. */
+  /** From the page URL; null when not in live mode. Throws on a `live=` URL that isn't loopback. */
   static fromLocation(loc = window.location) {
-    const m = /(?:^#|&)vt=([^&]+)/.exec(loc.hash);
-    return m ? new LiveSource({ token: decodeURIComponent(m[1]) }) : null;
+    const hash = new URLSearchParams(loc.hash.replace(/^#/, ''));
+    const query = new URLSearchParams(loc.search);
+    const token = hash.get('vt') ?? query.get('vt');
+    const live = query.get('live');
+    if (!token) return null;
+    if (live) {
+      const u = new URL(live);
+      if (!/^https?:$/.test(u.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) {
+        throw new Error(`live=${live}: only a loopback bridge (127.0.0.1) is allowed`);
+      }
+      return new LiveSource({ base: `${u.origin}/api/bridge/v1`, token, origin: u.origin });
+    }
+    return new LiveSource({ token });
   }
 
-  async _get(path) {
-    const r = await fetch(this.base + path, { headers: { Authorization: `Bearer v.${this.token}` } });
-    if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
-    return r.json();
+  status() { return this.connection.get('/status'); }
+  profile() { return this.connection.get('/profile'); }
+  fileInfo() { return this.connection.getOptional('/file'); }
+  fileContent() { return this.connection.get('/file/content', { text: true }); }
+  origins() { return this.connection.getOptional('/origins'); }
+  jobState() { return this.connection.getOptional('/job/state'); }
+
+  /** The loaded program (null when UGS has none) with its metadata. */
+  async loadProgram() {
+    const info = await this.fileInfo();
+    if (!info) return { gcode: null, fileInfo: null };
+    const text = await this.fileContent();
+    return { gcode: { name: info.path.split(/[\\/]/).pop(), text, path: info.path, sha256: info.sha256 }, fileInfo: info };
   }
 
-  status() { return this._get('/status'); }
-  profile() { return this._get('/profile'); }
-  fileInfo() { return this._get('/file'); }
-
+  /**
+   * Everything the viewer needs to draw the loaded job. The sidecar isn't available over the API
+   * (open question for package E), so the job model comes from the post headers.
+   */
   async load() {
-    // The API has no endpoint that returns the program text yet (GET /file is metadata only).
-    // Open question for package E: add GET /file/content (or serve it under /view/).
-    const profile = await this.profile().catch(() => null);
-    return { gcode: null, sidecar: null, profile };
+    const [status, profile, program, origins, jobState] = await Promise.all([
+      this.status(),
+      this.profile().catch(() => null),
+      this.loadProgram(),
+      this.origins().catch(() => null),
+      this.jobState().catch(() => null),
+    ]);
+    return { gcode: program.gcode, fileInfo: program.fileInfo, sidecar: null, profile, status, origins, jobState };
   }
+}
 
-  /** WS /events. Browsers can't set headers on a WebSocket; the token transport is an open question for package E. */
-  subscribe() {
-    throw new Error('live events are not implemented in viewer V1');
-  }
+/**
+ * Sidecar names to try for a program path or URL, in order (decision D12, post-headers.md §5):
+ * canonical `<stem>.job.json`, then `<file>.nc.job.json`.
+ */
+export function sidecarCandidates(file) {
+  const q = file.search(/[?#]/);
+  const p = q < 0 ? file : file.slice(0, q);
+  const rest = q < 0 ? '' : file.slice(q);
+  const stem = p.replace(/\.[^./]+$/, '');
+  const out = [`${stem}.job.json${rest}`];
+  if (stem !== p) out.push(`${p}.job.json${rest}`);
+  return out;
 }
 
 /** Light validation against bridge/schema/job-sidecar.schema.json (required fields only). */
