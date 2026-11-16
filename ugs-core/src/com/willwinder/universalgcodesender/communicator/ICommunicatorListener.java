@@ -44,6 +44,28 @@ public interface ICommunicatorListener {
     void commandSent(GcodeCommand command);
 
     /**
+     * When a real-time byte (status poll, feed hold, cycle start, reset, jog cancel, overrides...)
+     * is written with {@link ICommunicator#sendByteImmediately(byte)}.
+     * ugs-bridge patch P3: lets the session log record real-time bytes as tx.
+     *
+     * @param b the byte written to the controller
+     */
+    default void realtimeByteSent(byte b) {
+        // optional
+    }
+
+    /**
+     * ugs-bridge patch P4: an asynchronous dispatcher drops the events still queued when the communicator
+     * buffers are reset (connect, soft reset, cancel). A listener that must see every line on the wire
+     * (a session log) returns true to still receive them, in order.
+     *
+     * @return true to also receive events discarded by a reset
+     */
+    default boolean receivesDiscardedEvents() {
+        return false;
+    }
+
+    /**
      * The command skipped and not sent by the controller
      *
      * @param command the command that has been skipped

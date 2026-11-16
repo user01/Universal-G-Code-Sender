@@ -4,6 +4,11 @@ import com.willwinder.universalgcodesender.communicator.ICommunicatorListener;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.Assert.assertEquals;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -61,5 +66,45 @@ public class CommunicatorEventDispatcherTest {
         eventDispatcher.commandSkipped(null);
 
         verifyNoMoreInteractions(listener);
+    }
+
+    @Test
+    public void dispatchRealtimeByteShouldTriggerListener() {
+        ICommunicatorListener listener = mock(ICommunicatorListener.class);
+        eventDispatcher.addListener(listener);
+
+        eventDispatcher.realtimeByteSent((byte) 0x85);
+
+        verify(listener, times(1)).realtimeByteSent((byte) 0x85);
+        verifyNoMoreInteractions(listener);
+    }
+
+    @Test
+    public void listenersCanBeAddedAndRemovedWhileDispatching() {
+        // ugs-bridge P4: with a HashSet this threw ConcurrentModificationException
+        List<String> seen = new ArrayList<>();
+        ICommunicatorListener late = mock(ICommunicatorListener.class);
+        ICommunicatorListener[] self = new ICommunicatorListener[1];
+        self[0] = new ICommunicatorListener() {
+            @Override public void rawResponseListener(String response) {
+                seen.add(response);
+                eventDispatcher.addListener(late);
+                eventDispatcher.removeListener(self[0]);
+            }
+            @Override public void commandSent(com.willwinder.universalgcodesender.types.GcodeCommand command) { }
+            @Override public void commandSkipped(com.willwinder.universalgcodesender.types.GcodeCommand command) { }
+            @Override public void communicatorPausedOnError() { }
+            @Override public void onConnectionClosed() { }
+        };
+        eventDispatcher.addListener(self[0]);
+        for (int i = 0; i < 5; i++) {
+            eventDispatcher.addListener(mock(ICommunicatorListener.class));
+        }
+
+        eventDispatcher.rawResponseListener("ok");
+        eventDispatcher.rawResponseListener("ok");
+
+        assertEquals(List.of("ok"), seen);
+        verify(late, times(1)).rawResponseListener("ok");
     }
 }

@@ -29,13 +29,24 @@ public class AsyncCommunicatorEvent {
     public final AsyncCommunicatorEventType event;
     public final GcodeCommand command;
     public final String response;
+    /** ugs-bridge P3: the byte of a REALTIME_BYTE_SENT event */
+    public final byte realtimeByte;
+    /** ugs-bridge P4: the dispatcher's reset generation when the event was queued */
+    public final long generation;
 
     public AsyncCommunicatorEvent(
             AsyncCommunicatorEventType event,
             String response,
             GcodeCommand command) {
+        this(event, response, command, (byte) 0, 0);
+    }
+
+    public AsyncCommunicatorEvent(AsyncCommunicatorEventType event, String response, GcodeCommand command,
+                                  byte realtimeByte, long generation) {
         this.event = event;
         this.command = command;
         this.response = response;
+        this.realtimeByte = realtimeByte;
+        this.generation = generation;
     }
 }

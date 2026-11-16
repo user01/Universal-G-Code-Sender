@@ -59,6 +59,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -260,11 +261,12 @@ public class CaptureTest {
     }
 
     @Test
-    public void statusPollsAreNotLoggedAsTxAndReportsAreNotRx() throws Exception {
+    public void realtimeStatusPollsAreCountedNotLoggedAndReportsAreNotRx() throws Exception {
         connect();
         idle();
-        capture.commandSent(new GcodeCommand("?"));
+        capture.realtimeByteSent((byte) '?');
         capture.rawResponseListener("<Idle|MPos:0.000,0.000,0.000|FS:0,0|WCO:0.000,0.000,0.000>");
+        capture.realtimeByteSent((byte) '?');
         capture.rawResponseListener("<Idle|MPos:0.000,0.000,0.000|FS:0,0>");
         capture.rawResponseListener("<Idle|MPos:0.000,0.000,0.000|FS:0,0>");
         capture.onMessage(MessageType.VERBOSE, "<Idle|MPos:0.000,0.000,0.000|FS:0,0>\n");
@@ -277,6 +279,7 @@ public class CaptureTest {
         assertTrue(ofKind(recs, "tx").isEmpty());
         assertTrue(ofKind(recs, "rx").isEmpty());
         assertTrue(ofKind(recs, "message").isEmpty());
+        assertEquals(2, capture.statusPolls());
         List<JsonObject> st = ofKind(recs, "status");
         assertEquals(3, st.size());
         assertFalse(data(st.get(0)).has("heartbeat"));
@@ -284,6 +287,67 @@ public class CaptureTest {
         assertEquals("Run", data(st.get(2)).get("state").getAsString());
         assertEquals("mm", data(st.get(2)).get("units").getAsString());
         assertEquals("controller", st.get(0).get("src").getAsString());
+    }
+
+    /**
+     * A-2: UGS's GetStatusCommand sends "?" as a whole line at connect; GRBL answers with a report and "ok".
+     * The old capture skipped the line but counted its "ok" as an early answer, which made every later
+     * answer whose command was already done (normal with UGS's async event dispatch) shift by one.
+     * Event order as UGS delivers it with patch P6 (commandSent always before the answer), while the
+     * command objects are already complete when the capture sees commandSent.
+     */
+    @Test
+    public void wholeLineStatusQueryDoesNotShiftLaterAnswers() throws Exception {
+        connect();
+        List<GcodeCommand> sent = new ArrayList<>();
+        for (int round = 0; round < 3; round++) { // UGS retries the query until a report arrives
+            GcodeCommand q = new GcodeCommand("?");
+            q.appendResponse("<Alarm|MPos:0.000,0.000,0.000|FS:0,0>");
+            q.appendResponse("ok");
+            capture.commandSent(q);
+            capture.rawResponseListener("<Alarm|MPos:0.000,0.000,0.000|FS:0,0>");
+            capture.rawResponseListener("ok");
+            sent.add(q);
+        }
+        idle();
+        for (int i = 0; i < 20; i++) {
+            GcodeCommand c = fileLine("G1 X" + i, i);
+            c.appendResponse("ok"); // already done when its commandSent event is processed
+            capture.commandSent(c);
+            sent.add(c);
+        }
+        for (int i = 0; i < 20; i++) {
+            capture.rawResponseListener("ok");
+        }
+
+        List<JsonObject> recs = records();
+        List<JsonObject> tx = ofKind(recs, "tx");
+        List<JsonObject> rx = ofKind(recs, "rx");
+        assertEquals(sent.size(), tx.size());
+        assertEquals("?", data(tx.get(0)).get("line").getAsString());
+        assertEquals(sent.size(), rx.size());
+        for (int i = 0; i < sent.size(); i++) {
+            assertEquals("answer " + i, "u-" + sent.get(i).getId(), data(rx.get(i)).get("cmd_id").getAsString());
+        }
+    }
+
+    @Test
+    public void answerWithNothingWaitingIsUnsolicitedAndDoesNotShiftLaterAnswers() throws Exception {
+        connect();
+        idle();
+        capture.rawResponseListener("ok"); // answers something sent before the bridge attached
+        GcodeCommand a = new GcodeCommand("G4 P0");
+        a.appendResponse("ok");
+        capture.commandSent(a);
+        GcodeCommand b = new GcodeCommand("$#");
+        capture.commandSent(b);
+        capture.rawResponseListener("ok");
+        capture.rawResponseListener("ok");
+        List<JsonObject> rx = ofKind(records(), "rx");
+        assertFalse(data(rx.get(0)).has("cmd_id"));
+        assertEquals("controller", rx.get(0).get("src").getAsString());
+        assertEquals("u-" + a.getId(), data(rx.get(1)).get("cmd_id").getAsString());
+        assertEquals("u-" + b.getId(), data(rx.get(2)).get("cmd_id").getAsString());
     }
 
     @Test
@@ -300,22 +364,6 @@ public class CaptureTest {
         assertEquals(2, st.size());
         assertEquals("", data(st.get(0)).get("raw").getAsString());
         assertEquals("<Idle|MPos:5.000,0.000,0.000|FS:0,0>", data(st.get(1)).get("raw").getAsString());
-    }
-
-    @Test
-    public void ackOvertakingCommandSentDoesNotShiftAttribution() throws Exception {
-        connect();
-        idle();
-        GcodeCommand a = new GcodeCommand("G4 P0");
-        a.appendResponse("ok"); // already done when its commandSent event is processed
-        capture.rawResponseListener("ok");
-        capture.commandSent(a);
-        GcodeCommand b = new GcodeCommand("$#");
-        capture.commandSent(b);
-        capture.rawResponseListener("ok");
-        List<JsonObject> rx = ofKind(records(), "rx");
-        assertFalse(data(rx.get(0)).has("cmd_id"));
-        assertEquals("u-" + b.getId(), data(rx.get(1)).get("cmd_id").getAsString());
     }
 
     @Test
@@ -377,14 +425,44 @@ public class CaptureTest {
     }
 
     @Test
-    public void realtimeHook() throws Exception {
+    public void realtimeBytesAreTxWithHexAndAttribution() throws Exception {
         connect();
-        capture.recordRealtime((byte) '!', "claude", "c-1-0");
-        capture.recordRealtime((byte) 0x85, "operator", null);
+        idle();
+        capture.attributeRealtime((byte) '!', "claude", "c-1-0");
+        capture.realtimeByteSent((byte) '!');
+        capture.realtimeByteSent((byte) '!'); // a second hold is the operator's again
+        capture.realtimeByteSent((byte) 0x85);
+        capture.attributeRealtime((byte) 0x18, "claude", "c-2-0");
+        nanos.addAndGet(3_000_000_000L); // expired: not attributed any more
+        capture.realtimeByteSent((byte) 0x18);
         List<JsonObject> tx = ofKind(records(), "tx");
+        assertEquals(4, tx.size());
         assertEquals("!", data(tx.get(0)).get("line").getAsString());
         assertEquals("0x21", data(tx.get(0)).get("realtime").getAsString());
-        assertEquals("0x85", data(tx.get(1)).get("line").getAsString());
+        assertEquals("claude", tx.get(0).get("src").getAsString());
+        assertEquals("c-1-0", data(tx.get(0)).get("cmd_id").getAsString());
+        assertEquals("operator", tx.get(1).get("src").getAsString());
+        assertFalse(data(tx.get(1)).has("cmd_id"));
+        assertEquals("0x85", data(tx.get(2)).get("line").getAsString());
+        assertEquals("0x85", data(tx.get(2)).get("realtime").getAsString());
+        assertEquals("0x18", data(tx.get(3)).get("line").getAsString());
+        assertEquals("operator", tx.get(3).get("src").getAsString());
+    }
+
+    @Test
+    public void consoleEchoesAreDroppedOtherMessagesKept() throws Exception {
+        connect();
+        capture.onMessage(MessageType.INFO, ">>> G0 X10\n");
+        capture.onMessage(MessageType.VERBOSE, ">>> $G\n");
+        capture.onMessage(MessageType.INFO, "[claude] >>> G0 Z5\n");
+        capture.onMessage(MessageType.INFO, "ok\n");
+        capture.onMessage(MessageType.VERBOSE, "ok\n");
+        capture.onMessage(MessageType.INFO, "[PRB:-4.000,-449.000,-65.000:1]\nok\n");
+        capture.onMessage(MessageType.INFO, "*** Connected to 127.0.0.1 @ 2323 baud\n");
+        capture.onMessage(MessageType.ERROR, "An error occurred while processing: G0 X1000 (error:15)\n");
+        List<String> texts = ofKind(records(), "message").stream().map(r -> data(r).get("text").getAsString()).toList();
+        assertEquals(List.of("[PRB:-4.000,-449.000,-65.000:1]\nok", "*** Connected to 127.0.0.1 @ 2323 baud",
+                "An error occurred while processing: G0 X1000 (error:15)"), texts);
     }
 
     @Test

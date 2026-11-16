@@ -23,7 +23,7 @@ Run `uv run shapeoko-capture` from `../resurfacer` with Carbide Motion and UGS c
 |---|---|---|---|---|
 | B1 | **BitZero V2 total thickness** (aluminum block + plastic base), measured with calipers | Z zero on the stock. A wrong value cuts too deep or air-cuts | **13.0 mm** (11 mm aluminum + 2 mm plastic base, community-measured) | sourced |
 | B2 | BitZero V2 footprint | Simulator geometry; clearance moves around the block | 58 × 58 mm (from a published BitZero macro) | sourced |
-| B3 | **BitZero V2 bore diameter** and the offset from the bore center to the corner the block registers against | XY corner probing: the bore center is found by probing inside it, then the corner is the center minus this offset | unknown. Not published by Carbide 3D | blocked |
+| B3 | **BitZero V2 bore diameter** and the offset from the bore center to the corner the block registers against | XY corner probing: the bore center is found by probing inside it, then the corner is the center minus this offset | unknown. Not published by Carbide 3D. The simulator uses placeholders (22 mm, 14.5 mm) | blocked |
 | B4 | Z-only placement: block flat on the stock, or with the edge guides on the surface (forum: wrong choice gives 2–5 mm errors) | Which thickness applies in Z-only mode | flat on stock, 13 mm | assumed |
 | B5 | Probe failure reply on this firmware: `ALARM:4`/`ALARM:5`, `[PRB:…:0]`, and whether an `ok` follows | Command completion and error handling | `[PRB…:0]` then `ALARM:5`, no `ok` | assumed |
 | B6 | **BitSetter machine X/Y** (spindle centered over the button) | Every tool measurement | X −4, Y −449 | assumed (from the 2026-11-15 session) |
@@ -36,7 +36,7 @@ Run `uv run shapeoko-capture` from `../resurfacer` with Carbide Motion and UGS c
 
 | # | Fact | Why it matters | Current value | Status |
 |---|---|---|---|---|
-| C1 | Feed hold deceleration time from typical feeds | Resume-point matching; the simulator has no deceleration | instant in sim | assumed |
+| C1 | Feed hold deceleration time from typical feeds | Resume-point matching; how long `Hold:1` lasts | sim decelerates at the `$120`–`$122` placeholders (3000 mm/min on X: 0.125 s, 3.1 mm) | assumed |
 | C2 | Soft reset after a **completed** hold keeps position (no `ALARM:3`) | Can a stopped job be resumed without re-homing (SPEC §10 Q4) | yes per GRBL source | sourced |
 | C3 | USB unplugged mid-motion: does GRBL finish its buffer? | Power-cut / disconnect resume rules | yes in sim | assumed |
 | C4 | Tool-change park position the operator can reach comfortably | Tool-change interceptor (§11.5) | front center, X −222, Y −440, Z −5 | assumed |

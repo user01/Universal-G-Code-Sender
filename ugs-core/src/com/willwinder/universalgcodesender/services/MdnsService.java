@@ -41,7 +41,21 @@ public class MdnsService {
 
     private final List<MdnsEntry> mdnsEntries = new ArrayList<>();
 
+    /**
+     * ugs-bridge patch P5: mDNS discovery opens multicast sockets on every IPv4 interface, so it is
+     * opt-in in this fork. Enable with {@code -Dugs.mdns.enabled=true}.
+     */
+    public static final String ENABLED_PROPERTY = "ugs.mdns.enabled";
+
+    public static boolean isEnabled() {
+        return Boolean.getBoolean(ENABLED_PROPERTY);
+    }
+
     MdnsService() {
+        if (!isEnabled()) {
+            jmdnsList = List.of();
+            return;
+        }
         jmdnsList = Arrays.stream(NetworkTopologyDiscovery.Factory.getInstance().getInetAddresses())
                 .filter(Inet4Address.class::isInstance)
                 .map(inetAddress -> {

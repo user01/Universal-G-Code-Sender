@@ -30,6 +30,10 @@ class MachineProfile:
     envelope_max: tuple[float, float, float] = (0.0, 0.0, 0.0)
     bitsetter: BitSetterProfile = field(default_factory=BitSetterProfile)
     bitzero_plate_thickness: float | None = None
+    bitzero_outer_size: float | None = None
+    bitzero_bore_diameter: float | None = None
+    """Ledger B3; ``None`` until measured (the simulator then uses a marked placeholder)."""
+    bitzero_bore_center_to_corner: tuple[float, float] | None = None
     connect_resets_controller: bool = True
     expected_settings: dict[int, float] = field(default_factory=dict)
 
@@ -60,9 +64,33 @@ class MachineProfile:
             bitzero_plate_thickness=(
                 float(bz["plate_thickness"]) if bz.get("plate_thickness") is not None else None
             ),
+            bitzero_outer_size=_first(bz.get("outer_size")),
+            bitzero_bore_diameter=_opt_float(bz.get("bore_diameter")),
+            bitzero_bore_center_to_corner=_xy_or_scalar(bz.get("bore_center_to_corner")),
             connect_resets_controller=bool(doc.get("connect_resets_controller", True)),
             expected_settings=settings,
         )
+
+
+def _opt_float(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def _first(value: Any) -> float | None:
+    """A square size given as a number or as ``[w, h]`` (the first is used)."""
+    if value is None:
+        return None
+    if isinstance(value, list | tuple):
+        return float(value[0])
+    return float(value)
+
+
+def _xy_or_scalar(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    if isinstance(value, list | tuple):
+        return _vec2(value, (0.0, 0.0))
+    return (float(value), float(value))
 
 
 def _vec3(value: Any, default: tuple[float, float, float]) -> tuple[float, float, float]:

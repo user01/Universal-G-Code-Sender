@@ -1,9 +1,18 @@
 """A stand-in for the Java bridge API, for tests (bridge/docs/api.md, contract v1).
 
-Serves the read endpoints, ``POST /command`` (lines go to resurfacer's ``SimulatedGrbl``),
-``/realtime``, ``/notify``, ``/authority/request`` and ``WS /events``, with token auth (401)
-and the operator lock (423 / WebSocket close 4423). Every record it emits follows
+Serves the read endpoints, ``POST /command`` (lines go to a simulated GRBL: resurfacer's
+``SimulatedGrbl`` by default, or the workspace's ``ugs_sim.machine.ShapeokoGrbl`` with the
+BitSetter and BitZero), ``/realtime``, ``/notify``, ``/authority/request``, ``/origins``,
+``/origins/apply``, ``/file/load``, ``/file/run``, ``/job/state``, ``/job/resume/plan``,
+``/job/resume`` and ``WS /events``, with token auth (401), the operator lock (423 / WebSocket
+close 4423) and authority levels (403 with ``required``). Every record it emits follows
 ``bridge/schema/log-record.schema.json``.
+
+Like UGS, commands run in order on one queue (a worker thread), so ``POST /command`` answers
+202 at once and results arrive at ``GET /command/{id}``. ``$H``/``$X`` from Claude, file runs
+and resumes wait in ``awaiting_operator`` until a test plays the operator with
+:meth:`FakeBridge.confirm_operator`. Motion and Stream authority expire on an alarm or a
+reset, as SPEC §4.3 says.
 
 It binds 127.0.0.1 on an ephemeral port, writes ``bridge.json`` and ``token`` into the
 given home directory (a temp dir in tests, never the real one) and runs uvicorn on a
@@ -17,11 +26,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
+import queue
 import re
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -37,11 +50,22 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ugs_mcp.config import local_profile
 from ugs_mcp.describe import ALARMS, setting_name_units
-from ugs_mcp.safety import REALTIME_OPS, Level, LineClass, classify_line, level_allows
+from ugs_mcp.gcode.lexer import split_comments
+from ugs_mcp.safety import (
+    REALTIME_OPS,
+    Classification,
+    Level,
+    LineClass,
+    classify_line,
+    level_allows,
+)
 
 API = "/api/bridge/v1"
 REALTIME_BYTES = {"hold": "!", "resume": "~", "jog_cancel": "\x85", "reset": "\x18", "status": "?"}
 CONSOLE_KINDS = ("message", "tx", "rx", "command")
+POSITION_LOST_ALARMS = frozenset({1, 2, 3})
+_G54 = re.compile(r"^\[G54:([-\d.]+),([-\d.]+),([-\d.]+)\]$")
+_G10 = re.compile(r"G10")
 
 
 def _now() -> str:
@@ -50,6 +74,41 @@ def _now() -> str:
 
 def _err(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
     return JSONResponse({"error": code, "message": message, **extra}, status_code=status)
+
+
+@dataclass
+class Dialog:
+    """An operator confirmation the UGS GUI would show."""
+
+    id: str
+    kind: str
+    """``line`` ($H/$X from Claude), ``file_run`` or ``resume``."""
+    detail: str
+    event: threading.Event = field(default_factory=threading.Event)
+    accepted: bool | None = None
+    on_accept: Callable[[], None] | None = None
+
+
+@dataclass
+class _Job:
+    cid: str
+    lines: list[str]
+    classes: list[Classification]
+    tag: Any
+    expect: Any
+    origin: str
+    timeout: float
+    result: dict[str, Any]
+    gen: int
+    stream: bool = False
+    after: Callable[[dict[str, Any]], None] | None = None
+
+
+@dataclass
+class _Inflight:
+    lid: str | None
+    src: str
+    replies: list[str] = field(default_factory=list)
 
 
 class FakeBridge:
@@ -78,19 +137,30 @@ class FakeBridge:
         self.settings_read_at: str | None = None
         self.homed = False
         self.last_alarm: int | None = None
+        self.origins: list[dict[str, Any]] = []
+        self.job_state: dict[str, Any] | None = None
+        self.plans: dict[str, dict[str, Any]] = {}
+        self.dialogs: list[Dialog] = []
+        self.stream: dict[str, Any] = {"state": "idle"}
         self.port = 0
         self._seq = 0
         self._req = 0
+        self._gen = 0
         self._t0 = time.monotonic()
         self._lock = threading.RLock()
         self._subscribers: list[
             tuple[asyncio.Queue[dict[str, Any] | None], asyncio.AbstractEventLoop, set[str] | None]
         ] = []
         self._last_status: tuple[Any, ...] | None = None
+        self._last_ctrl: dict[str, Any] | None = None
         self._wco = (0.0, 0.0, 0.0)
+        self._inflight: _Inflight | None = None
+        self._jobs: queue.Queue[_Job | None] = queue.Queue()
         self.session = datetime.now().strftime("%Y%m%d-%H%M%S") + "-tcp_127.0.0.1_sim"
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
+        self._worker: threading.Thread | None = None
+        self._stopping = False
 
     # Lifecycle ---------------------------------------------------------------------------
 
@@ -120,8 +190,11 @@ class FakeBridge:
                     "bridge_version": "fake",
                 },
             )
-            for line in self._drain():
-                self.emit("rx", "controller", {"line": line})
+            with self._lock:
+                self._pump()
+        self._stopping = False
+        self._worker = threading.Thread(target=self._work, name="fake-bridge-queue", daemon=True)
+        self._worker.start()
         config = uvicorn.Config(
             self.app(), host="127.0.0.1", port=0, log_level="warning", lifespan="off"
         )
@@ -152,12 +225,21 @@ class FakeBridge:
 
     def stop(self) -> None:
         """Stop serving. ``bridge.json`` stays behind, like after a UGS crash."""
+        self._stopping = True
+        with self._lock:
+            self._gen += 1
+        for d in self.dialogs:
+            d.event.set()
         if self._server is not None:
             self._server.should_exit = True
         if self._thread is not None:
             self._thread.join(timeout=10)
+        if self._worker is not None:
+            self._jobs.put(None)
+            self._worker.join(timeout=10)
         self._server = None
         self._thread = None
+        self._worker = None
 
     @staticmethod
     def _write_private(path: Path, text: str) -> None:
@@ -172,6 +254,11 @@ class FakeBridge:
             self.locked = locked
             if locked:
                 self.level = Level.QUERY
+                self._gen += 1  # drop Claude's queued commands
+                for d in self.dialogs:
+                    if d.accepted is None:
+                        d.accepted = False
+                        d.event.set()
             self.emit(
                 "authority",
                 "operator",
@@ -189,6 +276,59 @@ class FakeBridge:
                 "operator",
                 {"locked": self.locked, "level": self.level.value, "by": "operator"},
             )
+
+    def pending_dialogs(self, kind: str | None = None) -> list[Dialog]:
+        with self._lock:
+            return [
+                d for d in self.dialogs if d.accepted is None and (kind is None or d.kind == kind)
+            ]
+
+    def confirm_operator(
+        self, *, accept: bool = True, kind: str | None = None, timeout: float = 5.0
+    ) -> Dialog:
+        """Answer the oldest open dialog (waiting up to ``timeout`` for one to appear)."""
+        deadline = time.monotonic() + timeout
+        while True:
+            open_ = self.pending_dialogs(kind)
+            if open_:
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"no operator dialog ({kind or 'any'}) appeared")
+            time.sleep(0.01)
+        d = open_[0]
+        d.accepted = accept
+        if accept and d.on_accept is not None:
+            d.on_accept()
+        d.event.set()
+        return d
+
+    def operator_command(self, lines: list[str], timeout: float = 30.0) -> dict[str, Any]:
+        """The operator types lines in the UGS console; waits for the result."""
+        cid = self._enqueue(lines, origin="operator", tag=None, expect=None, timeout=timeout)
+        return self.wait_result(cid, timeout)
+
+    def operator_home(self, timeout: float = 30.0) -> dict[str, Any]:
+        return self.operator_command(["$H"], timeout)
+
+    def wait_result(self, cid: str, timeout: float = 30.0) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                result = self.commands[cid]
+                if result["state"] in ("done", "failed", "dropped"):
+                    return result
+            time.sleep(0.005)
+        raise TimeoutError(f"command {cid} still {self.commands[cid]['state']}")
+
+    def wait_idle(self, timeout: float = 30.0) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                st = self._poll_status()
+            if st and st["state"] == "Idle":
+                return st
+            time.sleep(0.01)
+        return None
 
     # Records -----------------------------------------------------------------------------
 
@@ -231,43 +371,58 @@ class FakeBridge:
                 return out, out[-1]["seq"]
             return out, max(since, self._seq)
 
-    # Simulator ---------------------------------------------------------------------------
+    # Simulator I/O (always under self._lock) --------------------------------------------
 
-    def _drain(self) -> list[str]:
-        out: list[str] = []
+    def _route(self, line: str) -> dict[str, Any] | None:
+        """One line from the controller: a status report, a reply or unsolicited output."""
+        if line.startswith("<"):
+            return self._status_from(line)
+        inflight = self._inflight
+        if inflight is not None:
+            inflight.replies.append(line)
+            self.emit("rx", inflight.src, {"line": line, "cmd_id": inflight.lid})
+        else:
+            self.emit("rx", "controller", {"line": line})
+        if line.startswith("ALARM:"):
+            with contextlib.suppress(ValueError):
+                self._on_alarm(int(line[6:]))
+        return None
+
+    def _pump(self) -> None:
         while (line := self.sim.readline(0.0)) is not None:
-            out.append(line)
-        return out
+            self._route(line)
 
-    def _exchange(self, line: str, timeout: float = 2.0) -> list[str]:
-        self.sim.write((line + "\n").encode("ascii"))
-        replies: list[str] = []
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            r = self.sim.readline(max(0.0, deadline - time.monotonic()))
-            if r is None:
-                break
-            replies.append(r)
-            if r == "ok" or r.startswith(("error:", "ALARM:")):
-                break
-        return replies
+    def _on_alarm(self, code: int) -> None:
+        self.last_alarm = code
+        self.emit("event", "ugs", {"type": "alarm", "code": code})
+        if code in POSITION_LOST_ALARMS:
+            self.homed = False
+        self._expire_motion(f"alarm {code}")
+
+    def _expire_motion(self, why: str) -> None:
+        if level_allows(self.level, Level.MOTION):
+            self.level = Level.QUERY
+            self.emit(
+                "authority",
+                "bridge",
+                {"locked": self.locked, "level": self.level.value, "by": "bridge", "reason": why},
+            )
 
     def _poll_status(self) -> dict[str, Any] | None:
         if not self.connected:
             return None
         self.sim.write(b"?")
-        raw = None
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
             r = self.sim.readline(0.05)
             if r is None:
                 continue
-            if r.startswith("<"):
-                raw = r
-                break
-            self.emit("rx", "controller", {"line": r})
-        if raw is None:
-            return None
+            st = self._route(r)
+            if st is not None:
+                return st
+        return None
+
+    def _status_from(self, raw: str) -> dict[str, Any]:
         rep = parse_status(raw)
         if rep.wco is not None:
             self._wco = rep.wco
@@ -281,6 +436,7 @@ class FakeBridge:
         if key != self._last_status:
             self._last_status = key
             self.emit("status", "ugs", status)
+        self._last_ctrl = status
         return status
 
     def _controller_status(self, rep: StatusReport, raw: str) -> dict[str, Any]:
@@ -327,9 +483,258 @@ class FakeBridge:
             st["overrides"] = dict(zip(("feed", "rapid", "spindle"), rep.overrides, strict=True))
         return st
 
+    # Command queue -----------------------------------------------------------------------
+
+    def _enqueue(
+        self,
+        lines: list[str],
+        *,
+        origin: str,
+        tag: Any,
+        expect: Any,
+        timeout: float,
+        stream: bool = False,
+        after: Callable[[dict[str, Any]], None] | None = None,
+    ) -> str:
+        classes = [classify_line(x) for x in lines]
+        with self._lock:
+            self._req += 1
+            cid = f"{'s' if stream else 'c'}-{self._req}"
+            entries = []
+            for i, (line, c) in enumerate(zip(lines, classes, strict=True)):
+                entries.append(
+                    {
+                        "index": i,
+                        "line": line,
+                        "class": c.cls.value,
+                        "state": "queued",
+                        "response": [],
+                        "error_code": None,
+                        "alarm_code": None,
+                    }
+                )
+                if not stream:
+                    self.emit(
+                        "command",
+                        origin,
+                        {
+                            "id": f"{cid}-{i}",
+                            "origin": origin,
+                            "line": line,
+                            "tag": tag,
+                            "expect": expect,
+                            "state": "queued",
+                        },
+                    )
+            result: dict[str, Any] = {
+                "id": cid,
+                "tag": tag,
+                "expect": expect,
+                "state": "running",
+                "lines": entries,
+            }
+            self.commands[cid] = result
+            job = _Job(
+                cid,
+                lines,
+                classes,
+                tag,
+                expect,
+                origin,
+                timeout,
+                result,
+                self._gen,
+                stream=stream,
+                after=after,
+            )
+        self._jobs.put(job)
+        return cid
+
+    def _work(self) -> None:
+        while True:
+            job = self._jobs.get()
+            if job is None or self._stopping:
+                return
+            try:
+                self._run_job(job)
+            finally:
+                if job.after is not None:
+                    job.after(job.result)
+
+    def _cmd_record(self, job: _Job, i: int, state: str, **extra: Any) -> None:
+        if job.stream and state in ("ok", "sent", "queued"):
+            return  # D13: no command records for successful file lines
+        self.emit(
+            "command",
+            job.origin,
+            {
+                "id": f"{job.cid}-{i}",
+                "origin": job.origin,
+                "line": job.lines[i],
+                "tag": job.tag,
+                "expect": job.expect,
+                "state": state,
+                **extra,
+            },
+        )
+
+    def _run_job(self, job: _Job) -> None:
+        result = job.result
+        stop = False
+        for i, (line, c) in enumerate(zip(job.lines, job.classes, strict=True)):
+            entry = result["lines"][i]
+            if stop or job.gen != self._gen:
+                entry["state"] = "dropped"
+                self._cmd_record(job, i, "dropped")
+                continue
+            confirm = c.cls is LineClass.CONFIRM and job.origin == "claude"
+            if confirm and not self._await_operator(job, i, line):
+                entry["state"] = "dropped"
+                self._cmd_record(job, i, "dropped")
+                stop = True
+                continue
+            code_part, _, _ = split_comments(line)
+            norm = "".join(code_part.split()).upper()
+            if norm == "?":
+                with self._lock:
+                    st = self._poll_status()
+                entry["response"] = [st["raw"]] if st else []
+                entry["state"] = "ok"
+                self._cmd_record(job, i, "ok", response=entry["response"])
+                continue
+            replies, dropped = self._exchange(job, i, norm)
+            entry["response"] = replies
+            if dropped:
+                entry["state"] = "dropped"
+                self._cmd_record(job, i, "dropped", response=replies)
+                stop = True
+                continue
+            with self._lock:
+                stop = self._settle(job, i, norm, entry, replies) or stop
+        states = {ln["state"] for ln in result["lines"]}
+        with self._lock:
+            if states <= {"ok"}:
+                result["state"] = "done"
+            elif "dropped" in states and not states & {"error", "alarm"}:
+                result["state"] = "dropped"
+            else:
+                result["state"] = "failed"
+
+    def _await_operator(self, job: _Job, i: int, line: str) -> bool:
+        entry = job.result["lines"][i]
+        with self._lock:
+            entry["state"] = "awaiting_operator"
+            job.result["state"] = "awaiting_operator"
+            d = Dialog(f"d-{len(self.dialogs) + 1}", "line", line.strip())
+            self.dialogs.append(d)
+            self._cmd_record(job, i, "awaiting_operator")
+        while not d.event.wait(0.02):
+            if job.gen != self._gen or self._stopping:
+                d.accepted = False
+                break
+        with self._lock:
+            job.result["state"] = "running"
+        return bool(d.accepted) and job.gen == self._gen
+
+    def _exchange(self, job: _Job, i: int, norm: str) -> tuple[list[str], bool]:
+        lid = f"{job.cid}-{i}"
+        src = job.origin if job.origin != "bridge" else "bridge"
+        with self._lock:
+            tx: dict[str, Any] = {"line": norm, "cmd_id": lid}
+            if job.stream:
+                tx["file_line"] = i + 1
+            self.emit("tx", src, tx)
+            self._cmd_record(job, i, "sent")
+            job.result["lines"][i]["state"] = "sent"
+            self._inflight = _Inflight(lid, src)
+            self.sim.write((norm + "\n").encode("ascii", errors="replace"))
+        deadline = time.monotonic() + job.timeout
+        try:
+            while time.monotonic() < deadline:
+                with self._lock:
+                    self._pump()
+                    assert self._inflight is not None
+                    replies = list(self._inflight.replies)
+                last = replies[-1] if replies else ""
+                if last == "ok" or last.startswith(("error:", "ALARM:")):
+                    return replies, False
+                if job.gen != self._gen or self._stopping:
+                    return replies, True
+                time.sleep(0.002)
+            return replies, False
+        finally:
+            with self._lock:
+                self._inflight = None
+
+    def _settle(
+        self, job: _Job, i: int, norm: str, entry: dict[str, Any], replies: list[str]
+    ) -> bool:
+        """Record the outcome of one line; return True if the rest must be dropped."""
+        last = replies[-1] if replies else ""
+        stop = False
+        if last == "ok":
+            entry["state"] = "ok"
+            if norm == "$$":
+                self.settings_raw = [x for x in replies if x.startswith("$")]
+                self.settings_read_at = _now()
+                self.emit("event", "ugs", {"type": "setting", "count": len(self.settings_raw)})
+            elif norm == "$H":
+                self.homed = True
+            elif _G10.search(norm) and job.tag != "apply-origin":
+                self._record_origin(job)
+        elif last.startswith("error:"):
+            entry["state"] = "error"
+            entry["error_code"] = int(last[6:])
+            stop = True
+        elif last.startswith("ALARM:"):
+            entry["state"] = "alarm"
+            entry["alarm_code"] = int(last[6:])
+            stop = True
+        else:
+            entry["state"] = "error"  # no answer within the timeout
+            stop = True
+        self._cmd_record(
+            job,
+            i,
+            entry["state"],
+            response=replies,
+            error_code=entry["error_code"],
+            alarm_code=entry["alarm_code"],
+        )
+        return stop
+
+    def _record_origin(self, job: _Job, method: str = "g10", origin_id: str | None = None) -> None:
+        wco = getattr(self.sim, "wco", {}).get(54)
+        if wco is None:
+            return
+        vec = [round(float(v), 3) for v in wco]
+        oid = origin_id or f"o-{len(self.origins) + 1}"
+        if origin_id is None:
+            self.origins.append(
+                {
+                    "id": oid,
+                    "name": None,
+                    "wcs": "G54",
+                    "wco": vec,
+                    "method": method,
+                    "tool": None,
+                    "bitsetter_ref": None,
+                    "created": _now(),
+                    "session": self.session,
+                    "job_sha256": None,
+                    "pinned_to": [],
+                    "note": f"recorded from {job.origin} command {job.cid}",
+                }
+            )
+        self.emit(
+            "origin",
+            "bridge",
+            {"wcs": "G54", "wco": vec, "method": method, "origin_id": oid},
+        )
+
     # HTTP --------------------------------------------------------------------------------
 
-    def _auth(self, request: Request) -> Response | None:
+    def _auth(self, request: Request, level: Level = Level.OBSERVE) -> Response | None:
         remote = request.client.host if request.client else ""
         header = request.headers.get("authorization", "")
         if header != f"Bearer {self.token}":
@@ -342,6 +747,13 @@ class FakeBridge:
                 "client", "bridge", {"client": "mcp", "action": "locked_refused", "remote": remote}
             )
             return _err(423, "locked_by_operator", "UGS access is locked by the operator")
+        if not level_allows(self.level, level):
+            return _err(
+                403,
+                "authority_required",
+                f"needs {level.value} authority (granted: {self.level.value})",
+                required=level.value,
+            )
         return None
 
     async def _json(self, request: Request) -> dict[str, Any] | None:
@@ -360,7 +772,12 @@ class FakeBridge:
             Route(f"{API}/file", self.h_file),
             Route(f"{API}/profile", self.h_profile),
             Route(f"{API}/origins", self.h_origins),
+            Route(f"{API}/origins/apply", self.h_origins_apply, methods=["POST"]),
             Route(f"{API}/job/state", self.h_job_state),
+            Route(f"{API}/job/resume/plan", self.h_resume_plan, methods=["POST"]),
+            Route(f"{API}/job/resume", self.h_resume, methods=["POST"]),
+            Route(f"{API}/file/load", self.h_file_load, methods=["POST"]),
+            Route(f"{API}/file/run", self.h_file_run, methods=["POST"]),
             Route(f"{API}/command/{{cid}}", self.h_command_get),
             Route(f"{API}/command", self.h_command, methods=["POST"]),
             Route(f"{API}/realtime", self.h_realtime, methods=["POST"]),
@@ -376,6 +793,15 @@ class FakeBridge:
             alarm = None
             if self.last_alarm is not None and ctrl and ctrl["state"] == "Alarm":
                 alarm = {"code": self.last_alarm, "text": ALARMS.get(self.last_alarm, "")}
+            stream = {
+                "state": "idle",
+                "file": None,
+                "sha256": None,
+                "line_sent": None,
+                "line_acked": None,
+                "lines_total": None,
+                **self.stream,
+            }
             return {
                 "seq": self._seq,
                 "connection": {
@@ -393,14 +819,7 @@ class FakeBridge:
                     "level": self.level.value,
                     "motion_expires_at": None,
                 },
-                "stream": {
-                    "state": "idle",
-                    "file": None,
-                    "sha256": None,
-                    "line_sent": None,
-                    "line_acked": None,
-                    "lines_total": None,
-                },
+                "stream": stream,
                 "interceptor": None,
                 "tool": None,
             }
@@ -477,12 +896,264 @@ class FakeBridge:
     async def h_origins(self, request: Request) -> Response:
         if (r := self._auth(request)) is not None:
             return r
-        return JSONResponse({"format": "ugs-bridge-origins/1", "origins": []})
+        with self._lock:
+            return JSONResponse({"format": "ugs-bridge-origins/1", "origins": list(self.origins)})
+
+    async def h_origins_apply(self, request: Request) -> Response:
+        if (r := self._auth(request, Level.MOTION)) is not None:
+            return r
+        body = await self._json(request) or {}
+        oid = body.get("origin_id")
+        origin = next((o for o in self.origins if o["id"] == oid), None)
+        if origin is None:
+            return _err(404, "not_found", f"no origin {oid!r}")
+        if not self.homed:
+            return _err(409, "not_homed", "home the machine before applying an origin")
+        x, y, z = (f"{float(v):.3f}" for v in origin["wco"])
+
+        def applied(result: dict[str, Any]) -> None:
+            if result["state"] == "done":
+                job = _Job(result["id"], [], [], "apply-origin", None, "claude", 0, result, 0)
+                with self._lock:
+                    self._record_origin(job, method="restored", origin_id=origin["id"])
+
+        cid = self._enqueue(
+            [f"G10 L2 P1 X{x} Y{y} Z{z}", "$#"],
+            origin="claude",
+            tag="apply-origin",
+            expect=f"G54 = {origin['wco']} (origin {oid})",
+            timeout=10.0,
+            after=applied,
+        )
+        return JSONResponse({"command_id": cid}, status_code=202)
 
     async def h_job_state(self, request: Request) -> Response:
         if (r := self._auth(request)) is not None:
             return r
-        return _err(404, "not_found", "no job journal")
+        if self.job_state is None:
+            return _err(404, "not_found", "no job journal")
+        return JSONResponse(self.job_state)
+
+    async def h_resume_plan(self, request: Request) -> Response:
+        if (r := self._auth(request)) is not None:
+            return r
+        body = await self._json(request) or {}
+        target = body.get("target")
+        if not isinstance(target, dict) or not (
+            isinstance(target.get("line"), int)
+            or isinstance(target.get("operation"), str | int)
+            or target.get("stopped") is True
+        ):
+            return _err(
+                400,
+                "invalid_request",
+                "target must be {line: n}, {operation: name|number} or {stopped: true}",
+            )
+        sha = (self.job_state or {}).get("file", {}).get("sha256") or (
+            (self.file_info or {}).get("sha256")
+        )
+        if not sha:
+            return _err(404, "not_found", "no job file loaded and no journal")
+        with self._lock:
+            plan = self._canned_plan(target, str(sha))
+            self.plans[plan["plan_id"]] = plan
+            self.emit(
+                "job",
+                "bridge",
+                {"event": "resume_planned", "file_sha256": sha, "line": plan["resume_line"]},
+            )
+        return JSONResponse(plan)
+
+    def _canned_plan(self, target: dict[str, Any], sha: str) -> dict[str, Any]:
+        """A plan shaped like the Java ``ResumePlanner``'s (schema job-state ResumePlan)."""
+        js = self.job_state or {}
+        if isinstance(target.get("line"), int):
+            line = int(target["line"])
+        elif target.get("stopped"):
+            line = int(js.get("line_done") or 1)
+        else:
+            line = 120
+        wco = js.get("wco") or list(self._wco)
+        cur = list(self._wco)
+        last = js.get("last_mpos")
+        x, y = (last[0] - wco[0], last[1] - wco[1]) if last else (10.0, 20.0)
+        origin_ok = all(abs(a - b) < 0.01 for a, b in zip(wco, cur, strict=True))
+        requires: list[str] = []
+        if not self.homed:
+            requires.append("home")
+        if not origin_ok:
+            requires.append("restore_origin")
+        requires.append("tool_measure")
+        return {
+            "plan_id": f"p-{len(self.plans) + 1}",
+            "file_sha256": sha,
+            "requested": target,
+            "resume_line": line,
+            "safe_point": True,
+            "operation": js.get("operation") or "OP 03 Pocket",
+            "tool": js.get("tool") or "T21",
+            "checks": [
+                {"name": "journal_file", "ok": True, "detail": "journal matches the file"},
+                {
+                    "name": "resume_point",
+                    "ok": True,
+                    "detail": f"line {line} (last done {js.get('line_done', '?')})",
+                },
+                {
+                    "name": "homed",
+                    "ok": self.homed,
+                    "detail": "homed this connection" if self.homed else "not homed",
+                },
+                {"name": "tool", "ok": True, "detail": "T21 in the collet"},
+                {
+                    "name": "tool_length",
+                    "ok": False,
+                    "detail": "not measured since the stop; measure on the BitSetter",
+                },
+                {
+                    "name": "origin",
+                    "ok": origin_ok,
+                    "detail": "WCO matches the journal"
+                    if origin_ok
+                    else f"current WCO {cur} differs from the journal's {wco}",
+                },
+                {"name": "safe_point", "ok": True, "detail": "at clearance Z5"},
+                {"name": "clearance", "ok": True, "detail": "Z5 from header"},
+                {"name": "plunge_feed", "ok": True, "detail": "300 mm/min"},
+                {"name": "envelope", "ok": True, "detail": "safe Z and resume XY inside"},
+            ],
+            "requires": requires,
+            "preamble": [
+                "G21 G53 G0 Z-5",
+                "G21 G90 G17 G94 G54",
+                f"G0 X{x:.3f} Y{y:.3f}",
+                "G0 Z5",
+                "M3",
+                "G4 P2.0",
+                "G1 Z-1.5 F300",
+                "F1200",
+            ],
+            "warnings": [f"Resuming at line {line}: the stock above it is already cut"],
+        }
+
+    async def h_resume(self, request: Request) -> Response:
+        if (r := self._auth(request, Level.STREAM)) is not None:
+            return r
+        body = await self._json(request) or {}
+        plan = self.plans.get(str(body.get("plan_id")))
+        if plan is None:
+            return _err(404, "not_found", f"no plan {body.get('plan_id')!r}")
+
+        def accepted() -> None:
+            with self._lock:
+                self.stream = {"state": "running", "sha256": plan["file_sha256"]}
+                self.emit(
+                    "job",
+                    "operator",
+                    {
+                        "event": "resume_started",
+                        "file_sha256": plan["file_sha256"],
+                        "line": plan["resume_line"],
+                    },
+                )
+
+        with self._lock:
+            self.dialogs.append(
+                Dialog(
+                    f"d-{len(self.dialogs) + 1}",
+                    "resume",
+                    f"resume {plan['plan_id']} at line {plan['resume_line']}",
+                    on_accept=accepted,
+                )
+            )
+        return JSONResponse({"state": "awaiting_operator"}, status_code=202)
+
+    async def h_file_load(self, request: Request) -> Response:
+        if (r := self._auth(request, Level.MOTION)) is not None:
+            return r
+        body = await self._json(request) or {}
+        path = Path(str(body.get("path") or ""))
+        if not path.is_file():
+            return _err(400, "invalid_request", f"{path} is not a readable file")
+        data = path.read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        with self._lock:
+            self.file_info = {
+                "path": str(path),
+                "sha256": sha,
+                "lines": len(data.decode("utf-8", errors="replace").splitlines()),
+                "loaded_at": _now(),
+            }
+            self.emit(
+                "file",
+                "claude",
+                {
+                    "action": "loaded",
+                    "path": str(path),
+                    "sha256": sha,
+                    "lines": self.file_info["lines"],
+                },
+            )
+        return JSONResponse(self.file_info)
+
+    async def h_file_run(self, request: Request) -> Response:
+        if (r := self._auth(request, Level.STREAM)) is not None:
+            return r
+        info = self.file_info
+        if info is None:
+            return _err(404, "not_found", "no file loaded")
+        if self.stream.get("state") == "running":
+            return _err(409, "busy", "a file is already streaming")
+
+        def accepted() -> None:
+            text = Path(info["path"]).read_text(encoding="utf-8", errors="replace")
+            lines = []
+            for raw in text.splitlines():
+                code, _, _ = split_comments(raw)
+                if code.strip():
+                    lines.append(code.strip())
+            with self._lock:
+                self.stream = {
+                    "state": "running",
+                    "file": info["path"],
+                    "sha256": info["sha256"],
+                    "lines_total": len(lines),
+                }
+                self.emit(
+                    "file",
+                    "operator",
+                    {"action": "stream_start", "path": info["path"], "sha256": info["sha256"]},
+                )
+
+            def finished(result: dict[str, Any]) -> None:
+                with self._lock:
+                    self.stream["state"] = "completed" if result["state"] == "done" else "error"
+                    self.emit(
+                        "file",
+                        "ugs",
+                        {"action": "stream_end", "path": info["path"], "sha256": info["sha256"]},
+                    )
+
+            self._enqueue(
+                lines,
+                origin="ugs",
+                tag="stream",
+                expect=None,
+                timeout=60.0,
+                stream=True,
+                after=finished,
+            )
+
+        with self._lock:
+            self.dialogs.append(
+                Dialog(
+                    f"d-{len(self.dialogs) + 1}",
+                    "file_run",
+                    f"run {Path(info['path']).name} sha256 {info['sha256'][:12]}",
+                    on_accept=accepted,
+                )
+            )
+        return JSONResponse({"state": "awaiting_operator"}, status_code=202)
 
     async def h_command_get(self, request: Request) -> Response:
         if (r := self._auth(request)) is not None:
@@ -490,9 +1161,10 @@ class FakeBridge:
         cid = request.path_params["cid"]
         with self._lock:
             result = self.commands.get(cid)
-        if result is None:
+            snapshot = json.loads(json.dumps(result)) if result is not None else None
+        if snapshot is None:
             return _err(404, "not_found", f"no command {cid}")
-        return JSONResponse(result)
+        return JSONResponse(snapshot)
 
     async def h_command(self, request: Request) -> Response:
         if (r := self._auth(request)) is not None:
@@ -502,8 +1174,7 @@ class FakeBridge:
         if not isinstance(lines, list) or not lines or not all(isinstance(x, str) for x in lines):
             return _err(400, "invalid_request", "lines must be a non-empty list of strings")
         assert body is not None
-        classes = [classify_line(x) for x in lines]
-        for c in classes:
+        for c in (classify_line(x) for x in lines):
             if not level_allows(self.level, c.level):
                 return _err(
                     403,
@@ -513,113 +1184,20 @@ class FakeBridge:
                 )
         if not self.connected:
             return _err(409, "not_connected", "UGS is not connected to a controller")
-        with self._lock:
-            self._req += 1
-            cid = f"c-{self._req}"
-            result = self._run_command(cid, lines, classes, body.get("tag"), body.get("expect"))
-        return JSONResponse(
-            {
-                "id": cid,
-                "lines": [
-                    {k: ln[k] for k in ("index", "line", "class", "state")}
-                    for ln in result["lines"]
-                ],
-            },
-            status_code=202,
+        timeout = body.get("timeout_s")
+        cid = self._enqueue(
+            lines,
+            origin="claude",
+            tag=body.get("tag"),
+            expect=body.get("expect"),
+            timeout=float(timeout) if isinstance(timeout, int | float) and timeout > 0 else 60.0,
         )
-
-    def _run_command(
-        self, cid: str, lines: list[str], classes: list[Any], tag: Any, expect: Any
-    ) -> dict[str, Any]:
-        out_lines: list[dict[str, Any]] = []
-        result: dict[str, Any] = {
-            "id": cid,
-            "tag": tag,
-            "expect": expect,
-            "state": "running",
-            "lines": out_lines,
-        }
-        self.commands[cid] = result
-        stop = False
-        for i, (line, c) in enumerate(zip(lines, classes, strict=True)):
-            lid = f"{cid}-{i}"
-            entry: dict[str, Any] = {
-                "index": i,
-                "line": line,
-                "class": c.cls.value,
-                "state": "queued",
-                "response": [],
-                "error_code": None,
-                "alarm_code": None,
-            }
-            out_lines.append(entry)
-            base = {"id": lid, "origin": "claude", "line": line, "tag": tag, "expect": expect}
-            if stop:
-                entry["state"] = "dropped"
-                self.emit("command", "claude", {**base, "state": "dropped"})
-                continue
-            if c.cls is LineClass.CONFIRM:
-                entry["state"] = "awaiting_operator"
-                self.emit("command", "claude", {**base, "state": "awaiting_operator"})
-                stop = True
-                continue
-            self.emit("command", "claude", {**base, "state": "queued"})
-            if c.line == "?":
-                st = self._poll_status()
-                entry["response"] = [st["raw"]] if st else []
-                entry["state"] = "ok"
-                self.emit(
-                    "command", "claude", {**base, "state": "ok", "response": entry["response"]}
-                )
-                continue
-            self.emit("tx", "claude", {"line": c.line, "cmd_id": lid})
-            self.emit("command", "claude", {**base, "state": "sent"})
-            replies = self._exchange(c.line)
-            for rline in replies:
-                self.emit("rx", "claude", {"line": rline, "cmd_id": lid})
-            entry["response"] = replies
-            last = replies[-1] if replies else ""
-            if last == "ok":
-                entry["state"] = "ok"
-                if c.line == "$$":
-                    self.settings_raw = [x for x in replies if x.startswith("$")]
-                    self.settings_read_at = _now()
-                    self.emit("event", "ugs", {"type": "setting", "count": len(self.settings_raw)})
-                if c.line == "$H":
-                    self.homed = True
-            elif last.startswith("error:"):
-                entry["state"] = "error"
-                entry["error_code"] = int(last[6:])
-                stop = True
-            elif last.startswith("ALARM:"):
-                entry["state"] = "alarm"
-                entry["alarm_code"] = self.last_alarm = int(last[6:])
-                self.emit("event", "ugs", {"type": "alarm", "code": self.last_alarm})
-                stop = True
-            else:
-                entry["state"] = "error"
-                stop = True
-            self.emit(
-                "command",
-                "claude",
-                {
-                    **base,
-                    "state": entry["state"],
-                    "response": replies,
-                    "error_code": entry["error_code"],
-                    "alarm_code": entry["alarm_code"],
-                },
-            )
-        states = {ln["state"] for ln in out_lines}
-        if "awaiting_operator" in states:
-            result["state"] = "awaiting_operator"
-        elif states <= {"ok"}:
-            result["state"] = "done"
-        elif "dropped" in states and not states & {"error", "alarm"}:
-            result["state"] = "dropped"
-        else:
-            result["state"] = "failed"
-        return result
+        with self._lock:
+            result = self.commands[cid]
+            summary = [
+                {k: ln[k] for k in ("index", "line", "class", "state")} for ln in result["lines"]
+            ]
+        return JSONResponse({"id": cid, "lines": summary}, status_code=202)
 
     async def h_realtime(self, request: Request) -> Response:
         if (r := self._auth(request)) is not None:
@@ -635,10 +1213,19 @@ class FakeBridge:
             if op == "status":
                 self._poll_status()
             else:
+                if op == "reset":
+                    self._gen += 1  # queued lines are dropped
+                    for d in self.dialogs:
+                        if d.accepted is None:
+                            d.accepted = False
+                            d.event.set()
                 self.sim.write(byte.encode("latin-1"))
                 self.emit("tx", "claude", {"line": "", "realtime": code})
-                for line in self._drain():
-                    self.emit("rx", "controller", {"line": line})
+                inflight, self._inflight = self._inflight, None
+                self._pump()
+                self._inflight = inflight
+                if op == "reset":
+                    self._expire_motion("reset")
         return JSONResponse({"sent": code})
 
     async def h_notify(self, request: Request) -> Response:
