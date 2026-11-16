@@ -1,8 +1,9 @@
 """Cross-language contract check: the MCP server's BridgeClient against the real Java bridge server.
 
-Started by ContractPythonTest (JUnit) with the bridge home of an in-process Java API (temp dir, unlocked at
-Query). Prints ``LOCK_ME`` once the event stream is live and waits for ``locked`` on stdin, after which the Java
-side has locked Claude access. Exits 0 and prints ``CONTRACT OK`` when every check passes.
+Started by ContractPythonTest (JUnit) with the bridge home of an in-process Java API (temp
+dir, unlocked at Query). Prints ``LOCK_ME`` once the event stream is live and waits for
+``locked`` on stdin, after which the Java side has locked Claude access. Exits 0 and prints
+``CONTRACT OK`` when every check passes.
 
     uv run --frozen --package ugs-mcp python contract_client.py <bridge-home>
 """
@@ -46,9 +47,12 @@ async def main(home: Path) -> None:
 
     # status: the BridgeStatus shape
     st = await client.status()
-    check(STATUS_KEYS <= st.keys(), "status has the BridgeStatus keys")
+    check(st.keys() >= STATUS_KEYS, "status has the BridgeStatus keys")
     check(st["connection"]["connected"] is True, "status: connected")
-    check(st["authority"] == {**st["authority"], "locked": False, "level": "query"}, "status: unlocked at query")
+    check(
+        st["authority"] == {**st["authority"], "locked": False, "level": "query"},
+        "status: unlocked at query",
+    )
     check(st["controller"]["state"] == "Idle", "status: controller Idle")
 
     # query: $$ through the queue, then /settings
@@ -68,7 +72,10 @@ async def main(home: Path) -> None:
         await client.command(["G91 G0 Z5", "G90"])
         check(False, "motion refused at query")
     except BridgeForbiddenError as exc:
-        check(exc.status == 403 and exc.required == "motion", "403 authority_required, required=motion")
+        check(
+            exc.status == 403 and exc.required == "motion",
+            "403 authority_required, required=motion",
+        )
 
     # 401: wrong token
     with tempfile.TemporaryDirectory() as other:
@@ -91,7 +98,7 @@ async def main(home: Path) -> None:
                 received.append(rec)
                 if len(received) >= 3:
                     backlog_seen.set()
-        except BaseException as exc:  # noqa: BLE001 - we inspect it below
+        except BaseException as exc:
             outcome["error"] = exc
             backlog_seen.set()
 
@@ -101,14 +108,20 @@ async def main(home: Path) -> None:
             await backlog_seen.wait()
         seqs = [r["seq"] for r in received]
         check(seqs[0] == 1 and seqs == sorted(seqs), "events: backlog from seq 1, increasing")
-        check(all({"seq", "t", "kind", "src", "data"} <= r.keys() for r in received), "events: record envelope")
+        check(
+            all({"seq", "t", "kind", "src", "data"} <= r.keys() for r in received),
+            "events: record envelope",
+        )
         print("LOCK_ME", flush=True)
         answer = await anyio.to_thread.run_sync(sys.stdin.readline)
         check(answer.strip() == "locked", "operator locked")
         with anyio.fail_after(10):
             while outcome["error"] is None:
                 await anyio.sleep(0.05)
-    check(isinstance(outcome["error"], BridgeLockedError), f"events closed as locked ({outcome['error']!r})")
+    check(
+        isinstance(outcome["error"], BridgeLockedError),
+        f"events closed as locked ({outcome['error']!r})",
+    )
 
     # 423 on every request while locked
     try:

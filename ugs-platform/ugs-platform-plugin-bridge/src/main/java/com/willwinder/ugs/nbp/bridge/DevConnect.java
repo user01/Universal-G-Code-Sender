@@ -89,12 +89,29 @@ final class DevConnect {
      *
      * @return true if it unlocked
      */
-    static boolean maybeUnlock(BridgeLock lock, Authority authority) {
+    static boolean maybeUnlock(BackendAPI backend, Authority authority) {
+        // An armed level is applied once the simulator connection has settled: the connect's controller reset
+        // (DTR) disarms Motion/Stream, as it should.
         return maybeUnlock(System.getProperty(PROPERTY), System.getProperty(UNLOCK_PROPERTY), System.getProperty(LEVEL_PROPERTY),
-                authority);
+                authority, r -> {
+                    Thread t = new Thread(() -> {
+                        try {
+                            for (int i = 0; i < 60 && (backend == null || !backend.isConnected()); i++) {
+                                Thread.sleep(500);
+                            }
+                            Thread.sleep(4000);
+                            r.run();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }, "ugs-bridge-dev-level");
+                    t.setDaemon(true);
+                    t.start();
+                });
     }
 
-    static boolean maybeUnlock(String connect, String unlock, String level, Authority authority) {
+    static boolean maybeUnlock(String connect, String unlock, String level, Authority authority,
+                               java.util.function.Consumer<Runnable> afterConnect) {
         if (!"true".equals(unlock) || authority == null) {
             return false;
         }
@@ -107,7 +124,8 @@ final class DevConnect {
         if (level != null && !level.isBlank()) {
             try {
                 Level l = Level.parse(level);
-                authority.setLevel(l, "bridge", "DEVELOPMENT ONLY: level " + l.id() + " set at launch by -D" + LEVEL_PROPERTY);
+                afterConnect.accept(() -> authority.setLevel(l, "bridge",
+                        "DEVELOPMENT ONLY: level " + l.id() + " set after connecting by -D" + LEVEL_PROPERTY));
             } catch (IllegalArgumentException e) {
                 LOGGER.warning(() -> "Ignoring " + LEVEL_PROPERTY + "=" + level);
             }

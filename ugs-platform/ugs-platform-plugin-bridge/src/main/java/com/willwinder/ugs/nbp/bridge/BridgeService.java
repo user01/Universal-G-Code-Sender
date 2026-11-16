@@ -105,7 +105,7 @@ public final class BridgeService implements Runnable {
             start(backend, new SessionLog(BridgeHome.resolve()));
             startApi(backend);
             DevConnect.maybeConnect(backend);
-            DevConnect.maybeUnlock(LOCK, authority);
+            DevConnect.maybeUnlock(backend, authority);
             DevSnapshot.maybeStart();
         } catch (RuntimeException e) {
             LOGGER.log(Level.SEVERE, "ugs-bridge failed to start", e);

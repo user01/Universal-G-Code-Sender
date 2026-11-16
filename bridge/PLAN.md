@@ -44,7 +44,7 @@ Status 2026-11-15. Companion to `SPEC.md` (v0.1). Decisions here override the SP
 
 | ID | File(s) | Change | Why |
 |---|---|---|---|
-| P1 | `types/GcodeCommand`, `GrblCommandLogger`, `GrblHalCommandLogger` | optional `origin` tag; logger prefixes it | `[claude]` in the console |
+| P1 | `types/GcodeCommand`, `GrblCommandLogger`, `GrblHalCommandLogger` (+ `GrblCommandLoggerTest`) | optional `origin` field (`get/setOrigin`); `commandSent` echo becomes `[origin] >>> cmd` when set. Landed in W2 E/F | `[claude]` in the console |
 | P2 | `ugs-platform/pom.xml`, `ugs-platform/application/pom.xml` | register `ugs-platform-plugin-bridge` | module in the app build |
 | P3 | `communicator/ICommunicatorListener` | new default method `realtimeByteSent(byte)` | real-time bytes visible to listeners |
 | P3 | `communicator/BufferedCommunicator` | `sendByteImmediately` dispatches `realtimeByteSent` before the write | hold, resume, reset, jog cancel, overrides logged as `tx` |
@@ -136,6 +136,16 @@ HTML review reports for W0 and W1 (private artifacts): index https://claude.ai/a
 ### W2 A2 (capture fixes + core patches): done
 - A-2 fixed (P6 + `?` lines as `tx`), D16 echoes dropped, P3 real-time bytes as `tx`, P4 thread-safe listeners and no lost welcome lines, P5 mDNS opt-in.
 - `UgsSimIntegrationTest` (opt-in, ~25 s): UGS's GrblController over TCP to `ugs-sim` with Capture + SessionLog, checked line by line against the simulator's byte log: all `tx`/`rx` present and in order, every `rx` names the right command, all real-time bytes except `?` polls logged, records schema-valid, `user.home` untouched, mDNS never queried.
+
+### W2 E+F (local API, MCP lock, authority, Claude command path): done
+- **Server stack: JDK-only** (`bridge.api.http.LiteHttpServer`, HTTP/1.1 keep-alive + RFC 6455 WebSocket, one virtual thread per connection, ~600 lines). Not the pendant's Jetty 12/Jersey: those jars are inside `ugs-platform-ugslib` but not in its public packages, so a NetBeans module can't link them without another upstream edit, and Jersey/HK2 rely on ServiceLoader, fragile under module class loaders. The API is a few JSON routes, static files and one WS endpoint for 1-2 local clients.
+- 127.0.0.1 only, 8765 then up to 8775; `bridge.json` + `token` written 0600 (atomic, new token each launch); viewer token per launch, only in the `/view/#vt=` URL; `Host`/`Origin` must be loopback.
+- Every endpoint of api.md. `POST /job/resume` validates the plan and authority, then answers **501** until the J3/J4 runtime exists. `GET /job/state` serves the newest `job-*.state.json` under `logs/`.
+- Authority: lock + Observe/Query/Motion/Stream (`bridge.api.Authority`); Motion/Stream expire after 15 min without use and on any alarm, reset or disconnect (homed state survives probe alarms 4/5); every change is an `authority` record. Lock toolbar toggle (own toolbar "Claude", padlock drawn in code), *Machine → Lock Claude access*, Cmd/Ctrl+Shift+L; panel shows levels, expiry countdown, Claude's pending request, API port, *Open 3D view*, stock pendant warning.
+- Claude's lines go one at a time through `sendGcodeCommand(GcodeCommand)` with `origin=claude` (P1) and `CommandOrigins` ids `c-N-i`; `$H`/`$X` wait for a non-modal operator dialog; lock/alarm/reset/disconnect/expiry drop unsent lines (`dropped`).
+- Profile: the module jar bundles `bridge/profiles/shapeoko4-standard.json`; `<bridge home>/profile.json` overrides it (re-read per request). The viewer (`index.html`, `styles.css`, `src/`, `vendor/`) is packaged and served at `/view/`.
+- Dev only: `-Dugs.bridge.dev.unlock=true` (+ optional `-Dugs.bridge.dev.level=`) honored only with a loopback `-Dugs.bridge.dev.connect`; logged as an `authority` record by `bridge` saying DEVELOPMENT ONLY. Snapshot requests may contain `panel` / `close-dialogs`; dialogs are composited into the PNG.
+- Tests: classifier, authority/expiry, discovery perms, 27 HTTP/WS tests in-process, and `ContractPythonTest` (the MCP server's `BridgeClient` against the Java server: status, query, settings, 403, 401, events, lock → 4423/423).
 
 ## Work packages
 

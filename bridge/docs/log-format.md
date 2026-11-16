@@ -74,7 +74,10 @@ How the plugin fills the records. Fields marked "extra" are additive (allowed by
 - **`file`** extras: `stream_end` has `result: complete|canceled`; `stream_start` may have `processed_path`.
 - **`session`** extras: `disconnect` may have `reason: "connection_closed"`; `bridge_start` has `home`.
 - **`message`**: trailing newlines are stripped. Dropped because they duplicate other records (D16): UGS's console echoes of sent commands (`>>> G0 X1`, `>>> 0x85`, `>>>` for an empty line, optionally origin-tagged like `[claude] >>> …`), the echoed `ok`, and echoes of `<…>` reports of any type. Other console text stays, including multi-line responses such as `[PRB:…]\nok` and `$$` with setting descriptions.
-- **`authority`** (until authority levels exist): `level` is `observe` when locked and `query` when unlocked.
+- **`authority`**: `level` is the level in force (the operator's base level, Query by default, while locked or after unlocking; never an armed level). Extras: `motion_expires_at` while Motion/Stream is armed; `requested` on Claude's requests; `action: file_run`, `run_id`, `approved`, `path`, `sha256` for `POST /file/run` requests and the operator's answer. Development unlocks are logged `by: bridge` with a reason starting `DEVELOPMENT ONLY`.
+- **`command`** records written by the API (Claude's requests): `queued`, `awaiting_operator`, `dropped` (with `reason`) and, for `?`, `ok` with the status line; extras `class` and `reason`. `sent` and the final state of other lines come from the capture.
+- **`client`** extras: `endpoint`. `auth_failed` / `locked_refused` are logged at most once per 5 s per client type.
+- **`origin`** from `POST /origins/apply`: `method: restored`, `origin_id`, `command_id`, `read_back` (from `$#`), `verified` (within 0.01 mm).
 
 ## Notify details (package G)
 

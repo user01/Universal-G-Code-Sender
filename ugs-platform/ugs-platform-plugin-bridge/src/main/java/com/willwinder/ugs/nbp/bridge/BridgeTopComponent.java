@@ -55,7 +55,7 @@ public final class BridgeTopComponent extends TopComponent {
         row.add(lockButton);
         row.add(stateLabel);
         add(row, BorderLayout.NORTH);
-        add(new AuthorityPanel(), BorderLayout.CENTER); // package E/F: levels, expiry, Claude's requests, API, pendant
+        add(new javax.swing.JScrollPane(new AuthorityPanel()), BorderLayout.CENTER); // package E/F: levels, expiry, Claude's requests, API, pendant
         lockButton.addActionListener(e -> {
             BridgeLock lock = BridgeService.lock();
             if (lock.isLocked()) {

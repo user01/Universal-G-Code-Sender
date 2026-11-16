@@ -90,4 +90,14 @@ Breaking changes bump `/v1`. Additive fields are allowed at any time; clients mu
 - **Viewer WebSocket auth:** browsers can't set `Authorization` on a WebSocket, so the viewer passes its token as `WS /events?vt=<token>` (or the `Sec-WebSocket-Protocol: ugs-bridge.v1, vt.<token>` subprotocol). Only `v.`-class viewer tokens are accepted this way, never the MCP token. The server is loopback-only.
 - **Ids:** `CommandResult.id` identifies the request (`c-17`). In `command` log records, `id` and `cmd_id` identify one line (`c-17-0`).
 - **`src` on `rx`:** a reply to a command carries the `src` of whoever sent that command (`operator`, `claude`, `ugs`, `bridge`). Unsolicited controller output is `controller`.
+- **Implementation notes (W2 E/F, 2026-11-15):**
+  - Requests must carry `Host: 127.0.0.1:<port>` or `localhost:<port>` (400 otherwise); a WebSocket `Origin`, if sent, must be the same origin (403).
+  - The viewer token is rejected on every `POST` with `403 authority_required` (no `required` field).
+  - `POST /command` also refuses with **400** lines containing `!`, `~` or `?` (GRBL would treat them as real-time bytes, even in comments), line breaks, control or non-ASCII characters, lines over 256 characters, more than 200 lines; with **409** `busy` while a file streams and `interceptor_active` while UGS waits for a tool change (query-only requests pass). Level is checked before the connection (403 before 409).
+  - Lines run one at a time; a line that ends `error`/`alarm`/`skipped` or times out (`timeout_s`, default 60) fails the request and drops the rest. `CommandResult` may carry `reason`.
+  - `?` as a line is answered with a fresh status report (`response: ["<Idle|...>"]`) without going through UGS's queue.
+  - `POST /file/run` → `202 {state: "awaiting_operator", id: "f-N", sha256}`; outcome in `authority` records (`action: file_run`). Only one run request at a time (409 `busy`).
+  - `POST /job/resume/plan` accepts optional `tool` and `mid_contour` beside `target`. `POST /job/resume` answers `501 not_implemented` until the job runtime (J3/J4) lands.
+  - `GET /log` / `/console` add `truncated: true, oldest_seq` when `since` is older than the in-memory ring; `WS /events` closes with 1013 if a client falls 100 000 records behind.
+  - `GET /file/content` adds headers `X-Bridge-File` and `X-Bridge-SHA256`.
 - **Operation addressing:** names can repeat within a file, so `{operation: …}` also accepts the 1-based operation number (`5` or `"OP 05"`).

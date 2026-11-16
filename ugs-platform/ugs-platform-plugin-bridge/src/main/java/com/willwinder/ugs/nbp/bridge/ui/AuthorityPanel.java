@@ -67,7 +67,7 @@ public final class AuthorityPanel extends JPanel {
     private final JLabel stateLabel = new JLabel();
     private final JLabel requestLabel = new JLabel();
     private final JButton dismiss = new JButton("Dismiss");
-    private final JPanel requestRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    private final JPanel requestRow = new JPanel(new java.awt.BorderLayout(0, 2));
     private final JLabel apiLabel = new JLabel();
     private final JButton openView = new JButton("Open 3D view");
     private final JLabel pendantLabel = new JLabel();
@@ -95,8 +95,11 @@ public final class AuthorityPanel extends JPanel {
             add(left(r));
         }
         add(left(stateLabel));
-        requestRow.add(requestLabel);
-        requestRow.add(dismiss);
+        requestRow.add(requestLabel, java.awt.BorderLayout.CENTER);
+        JPanel dismissRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        dismissRow.add(dismiss);
+        requestRow.add(dismissRow, java.awt.BorderLayout.SOUTH);
+        requestRow.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
         dismiss.addActionListener(e -> {
             Authority a = BridgeService.authority();
             if (a != null) {
@@ -216,7 +219,7 @@ public final class AuthorityPanel extends JPanel {
                     + ". Hold, jog cancel and reset are always allowed.</html>");
         }
         if (s.pendingRequest() != null) {
-            requestLabel.setText("<html><b>Claude asks for " + s.pendingRequest().level().label() + "</b> ("
+            requestLabel.setText("<html><div style='width:230px'><b>Claude asks for " + s.pendingRequest().level().label() + "</b> ("
                     + HM.format(s.pendingRequest().at()) + "): " + escape(s.pendingRequest().reason()) + "</html>");
             requestRow.setVisible(true);
         } else {
