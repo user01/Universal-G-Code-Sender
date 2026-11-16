@@ -159,6 +159,15 @@ Totals after integration: ugs-core 951, bridge module 240 (+ both sim ITs), Pyth
 - Live viewer against the real plugin API (`Open 3D view`).
 - Real machine: ledger A–D once connected.
 
+### Machine session 1 (2026-11-16): fixes on `bridge-session1-fixes`
+First session on the real Shapeoko (results in `docs/machine-ledger.md`: A1–A4, A6, B1, B6–B8, B10, C7, C8, D1, D2, D2a, D5). Bugs found there and fixed:
+- **Stale motion results:** MCP move/jog/probe returned "Idle" at the pre-move position right after GRBL's `ok` (4 times live). Motion calls now end with `G4 P0` (not after jogs) and wait for a status report younger than the `ok`; regression test with a UGS-like status interval in the fake bridge.
+- **Silent controller:** after a USB/EMI freeze the status kept saying Idle for 5 minutes. `GET /status` gains `controller_report {seq, at, age_s, silent}`; MCP status says NO STATUS FROM CONTROLLER and motion is refused past 5 s; the bridge logs `controller_silent` after 10 s (notified under `connection_lost`) and `controller_responding` when reports resume.
+- **Tool-change prompt during spin-down:** the prompt came 1.2 s after `M5` with the bit still coasting. Profile `spindle.spin_down_s` (8 s, assumed, ledger C8); the routine dwells out the rest after parking and the prompt says to wait for the bit to stop.
+- **BitRunner is on/off only (C7):** profile `spindle.s_off_verified` 10000 / `s_on_verified` 18000; `analyze_file` errors on S at or below the off value (or none), warns between (the operator's files use S16000: untested), and reports the router dial as the speed.
+- Profile: BitZero 13.35 mm (paper test), BitSetter X −4.2 Y −448.2, 14 planner blocks. Tests read the thickness from the profile.
+- Still open from the session: confirm 13.35 by a re-probe; S16000 on the BitRunner; time the spin-down; homing repeatability 5×; pocket test for D2; D3/D4.
+
 ### Follow-ups queued for W2 (kept for history)
 - V-1 viewer: tool-change block outside operations (D11); live source with `GET /file/content` + `?vt=` WebSocket auth.
 - S-1 sim: XY probing (`G38.x` with X/Y) for BitZero corner tests. ~~Promote the Java compatibility harness into a JUnit integration test~~: done in W2 A2 (`UgsSimIntegrationTest`, opt-in with `-Dugs.bridge.it=true` or `UGS_SIM_IT=1`).
