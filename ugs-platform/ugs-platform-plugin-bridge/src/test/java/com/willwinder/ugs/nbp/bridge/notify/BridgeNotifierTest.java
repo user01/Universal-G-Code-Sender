@@ -163,7 +163,7 @@ public class BridgeNotifierTest {
         assertTrue(log.awaitWritten(3000));
         String all = String.join("\n", Files.readAllLines(LogFiles.sessionFiles(home).get(0)));
         assertFalse(all.contains(TOKEN));
-        assertFalse(all.contains("xyzFakeSecret123"));
+        assertFalse(all.contains("test-only"));
     }
 
     @Test

@@ -83,7 +83,7 @@ public class SinksHttpTest {
         assertEquals(Sinks.OK, r.status());
         FakeChatServer.Request req = server.requests.get(0);
         assertEquals("POST", req.method());
-        assertEquals("/services/T000FAKE/B000FAKE/xyzFakeSecret123", req.path());
+        assertEquals(java.net.URI.create(WEBHOOK).getPath(), req.path());
         assertTrue(req.contentType().startsWith("application/json"));
         JsonObject body = JsonParser.parseString(req.body()).getAsJsonObject();
         assertEquals("⚠ ALARM 4: probe fail", body.get("text").getAsString());
