@@ -46,6 +46,15 @@ Status 2026-11-15. Companion to `SPEC.md` (v0.1). Decisions here override the SP
 |---|---|---|---|
 | P1 | `types/GcodeCommand`, `GrblCommandLogger`, `GrblHalCommandLogger` | optional `origin` tag; logger prefixes it | `[claude]` in the console |
 | P2 | `ugs-platform/pom.xml`, `ugs-platform/application/pom.xml` | register `ugs-platform-plugin-bridge` | module in the app build |
+| P3 | `communicator/ICommunicatorListener` | new default method `realtimeByteSent(byte)` | real-time bytes visible to listeners |
+| P3 | `communicator/BufferedCommunicator` | `sendByteImmediately` dispatches `realtimeByteSent` before the write | hold, resume, reset, jog cancel, overrides logged as `tx` |
+| P3 | `communicator/event/CommunicatorEventDispatcher` | forwards `realtimeByteSent` | |
+| P3 | `communicator/event/AsyncCommunicatorEventDispatcher`, `AsyncCommunicatorEvent`, `AsyncCommunicatorEventType` | queue `REALTIME_BYTE_SENT` in order with the other events | wire order kept |
+| P4 | `communicator/event/CommunicatorEventDispatcher` | listener set `HashSet` → `CopyOnWriteArraySet` | `ConcurrentModificationException` when a listener attaches while events are dispatched |
+| P4 | `communicator/event/AsyncCommunicatorEventDispatcher`, `AsyncCommunicatorEvent`, `ICommunicatorListener` | `reset()` no longer clears the queue: queued events get an older generation and go only to listeners whose new default `receivesDiscardedEvents()` is true | the initializer's `resetBuffers()` at connect/soft reset threw away the second welcome line (`[MSG:'$H'\|'$X' to unlock]`), seen on the simulator |
+| P4 | `GrblController` | `openCommPort` sets `CONNECTING` before `comm.connect` (as `AbstractController` does) | the bridge attaches on that event, before the first welcome line |
+| P5 | `services/MdnsService` | jmdns only if `-Dugs.mdns.enabled=true` (`MdnsService.isEnabled()`) | `TCPConnection` started mDNS on every IPv4 interface; the bridge must not advertise on the LAN. Cost: no `_telnet._tcp` device list for the TCP driver unless enabled |
+| P6 | `communicator/BufferedCommunicator` | `streamCommands` dispatches `commandSent` before `sendStringToComm` | a fast answer could be dispatched before its command's `commandSent` (UGS's own controller has the same race); with it, `rx` attribution is exact without guessing |
 | — | anything else | must be justified here | |
 
 ## Notifications (new SPEC §4.6, draft)
@@ -103,7 +112,7 @@ Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clea
 - D18 **The dev GUI may run** with an isolated home (`bridge/.dev-home`, so the installed UGS's settings are untouched) against the simulator over TCP. The machine isn't connected, so no live machine work yet.
 - D19 **No machine capture or measurements for now.** Proceed on sourced or assumed values, all tracked in `bridge/docs/machine-ledger.md` (BitZero V2 13 mm sourced; bore unknown, so XY corner probing stays simulator-only).
 
-### Upstream patch candidates (from A), approved (D17)
+### Upstream patch candidates (from A), approved (D17); landed in W2 A2 (see the table above)
 - P3 a listener hook in `BufferedCommunicator.sendByteImmediately`, so real-time bytes (hold, resume, reset, overrides) are logged as tx. Without it, operator real-time bytes are invisible in the log.
 - P4 make `CommunicatorEventDispatcher.communicatorListeners` thread-safe, or attach before `comm.connect`. This avoids a rare `ConcurrentModificationException` and the lost welcome lines at connect.
 
@@ -111,7 +120,7 @@ Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clea
 HTML review reports for W0 and W1 (private artifacts): index https://claude.ai/artifact/Sjq1TZk1oD2FkXacBjn33S
 
 ### Findings from the review runs
-- **A-2 (bug, fix before E/F):** `rx.cmd_id` drifts. UGS's `GetStatusCommand` sends `?` as whole lines at connect. Capture skips them in `commandSent`, so their `ok`s raise the early-answer counter, which is never cleared. On the simulator, 120 of 152 rx answers carried the wrong `cmd_id`; `command` records are unaffected. Fix: keep `?` lines on the waiting list without a tx record, plus a unit test and a simulator rerun.
+- **A-2 (bug, fixed in W2 A2):** `rx.cmd_id` drifts. UGS's `GetStatusCommand` sends `?` as whole lines at connect. Capture skips them in `commandSent`, so their `ok`s raise the early-answer counter, which is never cleared. On the simulator, 120 of 152 rx answers carried the wrong `cmd_id`; `command` records are unaffected. Fix: `?` lines are logged as `tx` and wait for their `ok`; the early-answer counter is gone because P6 makes `commandSent` always precede the answer. Simulator rerun (`UgsSimIntegrationTest`): every `rx` names the right command.
 - J-2: round the stored BitSetter `ref` and WCO values to 0.001 mm (`-7.520000000000003` appears in the journal).
 - V-1 is confirmed: the viewer's marker ops still contain the following M6 block.
 - The simulator has no deceleration, so `Hold:1` lasts one report. Reset-after-hold tests are optimistic.
@@ -119,10 +128,14 @@ HTML review reports for W0 and W1 (private artifacts): index https://claude.ai/a
 
 ### Follow-ups queued for W2
 - V-1 viewer: tool-change block outside operations (D11); live source with `GET /file/content` + `?vt=` WebSocket auth.
-- S-1 sim: XY probing (`G38.x` with X/Y) for BitZero corner tests; promote the Java compatibility harness into a JUnit integration test.
+- S-1 sim: XY probing (`G38.x` with X/Y) for BitZero corner tests. ~~Promote the Java compatibility harness into a JUnit integration test~~: done in W2 A2 (`UgsSimIntegrationTest`, opt-in with `-Dugs.bridge.it=true` or `UGS_SIM_IT=1`).
 - J-1 job: BitZero XYZ-corner sequence; the envelope Z check uses the post-measurement WCO.
-- A-1 capture: confirm rx `src` follows the originating command (api.md additions); real-time bytes once P3 lands.
+- A-1 capture: confirm rx `src` follows the originating command (api.md additions). Real-time bytes: P3 landed (W2 A2); the API must call `Capture.attributeRealtime` before it sends one.
 - Operator's post (`post/user.py`): in step20/29/30/32/50 the `(CUT EXTENT …)` header is offset −20 mm in X/Y from the G-code (blank vs. jig coordinates). `analyze_file` warns about it.
+
+### W2 A2 (capture fixes + core patches): done
+- A-2 fixed (P6 + `?` lines as `tx`), D16 echoes dropped, P3 real-time bytes as `tx`, P4 thread-safe listeners and no lost welcome lines, P5 mDNS opt-in.
+- `UgsSimIntegrationTest` (opt-in, ~25 s): UGS's GrblController over TCP to `ugs-sim` with Capture + SessionLog, checked line by line against the simulator's byte log: all `tx`/`rx` present and in order, every `rx` names the right command, all real-time bytes except `?` polls logged, records schema-valid, `user.home` untouched, mDNS never queried.
 
 ## Work packages
 

@@ -28,5 +28,6 @@ public enum AsyncCommunicatorEventType {
     COMMAND_SKIPPED,
     COMMAND_DONE,
     RAW_RESPONSE,
-    PAUSED
+    PAUSED,
+    REALTIME_BYTE_SENT
 }
