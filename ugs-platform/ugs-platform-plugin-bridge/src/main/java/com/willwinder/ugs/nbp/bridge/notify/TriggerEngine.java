@@ -50,7 +50,10 @@ final class TriggerEngine {
     /** An AlarmEvent without a wire ALARM:n within this time is reported on its own. */
     static final long UGS_ALARM_GRACE_NANOS = TimeUnit.SECONDS.toNanos(2);
     private static final Pattern T_WORD = Pattern.compile("(?i)(?<![A-Z])T\\s*(\\d{1,3})");
-    private static final String TOOL_CHANGE_STEP = "toolChange.changeTool";
+    /** The "install the tool" prompts: UGS's ToolChangeInterceptor and the bridge's BitSetterInterceptor. */
+    private static final java.util.Set<String> TOOL_CHANGE_STEPS = java.util.Set.of("toolChange.changeTool",
+            com.willwinder.ugs.nbp.bridge.runtime.ToolChangeRoutine.STEP_CHANGE);
+    private static final String NO_REFERENCE_STEP = com.willwinder.ugs.nbp.bridge.runtime.ToolChangeRoutine.STEP_NO_REFERENCE;
 
     record Notification(String trigger, String text, String level) {
     }
@@ -294,15 +297,20 @@ final class TriggerEngine {
     private void onInterceptor(JsonObject d, List<Notification> out) {
         String state = str(d, "state");
         String interceptor = str(d, "interceptor");
-        boolean toolChange = interceptor == null || interceptor.contains("ToolChange");
+        boolean toolChange = interceptor == null || interceptor.contains("ToolChange") || interceptor.contains("BitSetter");
         if (!toolChange) {
             return;
         }
         int line = d.has("file_line") && d.get("file_line").isJsonPrimitive() ? d.get("file_line").getAsInt() : lastFileLine;
         if ("waiting_for_user".equals(state)) {
             String step = str(d, "step");
-            if (step != null && !TOOL_CHANGE_STEP.equals(step)) {
-                return; // the second prompt ("continue") needs no extra message
+            if (NO_REFERENCE_STEP.equals(step)) {
+                out.add(new Notification(Triggers.TOOL_CHANGE_WAITING, Messages.toolChangeNoReference(fileName(), line),
+                        Triggers.ALERT));
+                return;
+            }
+            if (step != null && !TOOL_CHANGE_STEPS.contains(step)) {
+                return; // the second prompt ("continue", probe pin) needs no extra message
             }
             Integer tool = toolNumber(str(d, "trigger"));
             String desc = null;

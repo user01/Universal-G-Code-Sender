@@ -152,17 +152,101 @@ public class ToolChangeRoutineTest {
     }
 
     @Test
-    public void withoutAReferenceItParksAndFailsBeforePrompting() throws Exception {
+    public void withoutAReferenceItParksExplainsAndFailsLeavingTheStreamPaused() throws Exception {
         try {
             routine().toolChange("T21 M6", line("T21 M6"), job, null);
             fail("expected failure");
         } catch (ToolChangeRoutine.RoutineException e) {
             assertTrue(e.getMessage(), e.getMessage().contains("No BitSetter reference"));
         }
-        assertTrue(prompts.isEmpty());
+        // the operator is told why in the UGS dialog, after parking; nothing is measured
+        assertEquals(List.of(ToolChangeRoutine.STEP_NO_REFERENCE), prompts.stream().map(InterceptorPrompt::stepId).toList());
+        assertEquals("No BitSetter reference", prompts.get(0).title());
+        assertTrue(prompts.get(0).message().contains("parked at safe Z"));
+        assertEquals(6, sentAtPrompt.get(0).size());
         assertEquals("G4 P0", m.log.get(m.log.size() - 1));
+        assertTrue(m.log.stream().noneMatch(l -> l.startsWith("G38.2") || l.startsWith("G10")));
         assertFalse(m.spindleOn);
         assertEquals(-5.0, m.mpos[2], 0);
+        assertEquals(List.of("change_requested"), events.toolEvents());
+    }
+
+    @Test
+    public void withoutAReferenceTheOperatorCanAbortTheJob() throws Exception {
+        try {
+            routine(UserResponse.ABORT).toolChange("T21 M6", line("T21 M6"), job, null);
+            fail("expected abort");
+        } catch (InterceptAbortedException expected) {
+            // the service cancels the stream; the machine stays parked
+        }
+        assertEquals("G4 P0", m.log.get(m.log.size() - 1));
+        assertFalse(m.spindleOn);
+    }
+
+    // ---------------------------------------------------------------- D22: same tool, length known
+
+    @Test
+    public void sameToolWithKnownLengthSendsOnlyTheToolWord() throws Exception {
+        ToolChangeRoutine r = routine();
+        ToolChangeRoutine.Result res = r.toolChange("T21 M6", line("T21 M6"), job, 10.0, "T21");
+        assertEquals(List.of("T21"), m.log);
+        assertEquals(m.log, r.sent());
+        assertTrue(prompts.isEmpty());
+        assertFalse(res.measured());
+        assertEquals("T21", res.tool());
+        assertNull(res.wcoZ());
+        assertEquals(-60.0, m.g54[2], 0); // Z offset untouched
+        assertEquals(List.of("confirmed"), events.toolEvents());
+        var d = events.tools.get(0);
+        assertTrue(d.get("measurement_skipped").getAsBoolean());
+        assertEquals(ToolChangeRoutine.NOTE_SKIPPED, d.get("note").getAsString());
+        assertEquals(line("T21 M6"), d.get("file_line").getAsInt());
+        assertTrue(events.expects.isEmpty());
+    }
+
+    @Test
+    public void knownLengthToolIsComparedByNumber() throws Exception {
+        routine().toolChange("M06 T2", -1, null, 10.0, "T02");
+        assertEquals(List.of("T2"), m.log);
+        assertTrue(prompts.isEmpty());
+    }
+
+    @Test
+    public void sameToolFromTheJobWithoutAToolWordSendsNothing() throws Exception {
+        String program = Fixtures.TWO_TOOLS.replace("T21 M6", "T21\nM6");
+        JobModel j = JobModel.parse("split.nc", program, null);
+        int m6 = -1;
+        for (int i = 1; i <= j.lineCount(); i++) {
+            if (j.line(i).trim().equals("M6") && j.toolChangeTarget(i) == 21) {
+                m6 = i;
+            }
+        }
+        ToolChangeRoutine.Result res = routine().toolChange("M6", m6, j, 10.0, "T21");
+        assertTrue(m.log.isEmpty());
+        assertFalse(res.measured());
+        assertTrue(prompts.isEmpty());
+    }
+
+    @Test
+    public void anyDoubtRunsTheFullSequence() throws Exception {
+        // other tool known, no known tool, M6 without a resolvable tool number
+        String[][] cases = {{"T21 M6", "T02"}, {"T21 M6", null}, {"M6", "T21"}};
+        for (String[] c : cases) {
+            FakeMachine fm = new FakeMachine();
+            List<InterceptorPrompt> asked = new ArrayList<>();
+            ToolChangeRoutine r = new ToolChangeRoutine(Fixtures.profile(), fm, p -> {
+                asked.add(p);
+                return UserResponse.CONTINUE;
+            }, new Fixtures.Events());
+            ToolChangeRoutine.Result res = r.toolChange(c[0], c[0].startsWith("T") ? line(c[0]) : -1,
+                    c[0].startsWith("T") ? job : null, 10.0, c[1]);
+            String which = c[0] + " / " + c[1];
+            assertTrue(which, res.measured());
+            assertEquals(which, ToolChangeRoutine.STEP_CHANGE, asked.get(0).stepId());
+            assertTrue(which, fm.log.contains("M5"));
+            assertTrue(which, fm.log.stream().anyMatch(l -> l.startsWith("G38.2")));
+            assertTrue(which, fm.log.stream().anyMatch(l -> l.startsWith("G10 L2 P1 Z")));
+        }
     }
 
     @Test

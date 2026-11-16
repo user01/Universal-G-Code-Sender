@@ -59,11 +59,19 @@ import java.util.regex.Pattern;
  *   G4 P0
  * </pre>
  * Every exit before the measurement leaves the machine parked at safe Z with the spindle off; a failure after it
- * tries {@code G90} + {@code G53 G0 Z<safe>} before giving up.
+ * tries {@code G90} + {@code G53 G0 Z<safe>} before giving up. Without a BitSetter reference the routine parks,
+ * tells the operator why in the UGS dialog ({@link #STEP_NO_REFERENCE}) and fails, leaving the stream paused.
+ *
+ * <p>D22: when the M6 asks for the tool that is already in the collet and its length is known (measured in this
+ * connection, nothing since that could invalidate it; the runtime decides, see {@code knownLengthTool}), only the
+ * tool word is sent: no park, no prompt, no measurement.
  */
 public final class ToolChangeRoutine {
     public static final String STEP_CHANGE = "bridge.toolChange.change";
     public static final String STEP_PROBE_PIN = "bridge.toolChange.probePin";
+    public static final String STEP_NO_REFERENCE = "bridge.toolChange.noReference";
+    /** Note of the {@code tool} record when D22 skips the measurement. */
+    public static final String NOTE_SKIPPED = "same tool, length known, measurement skipped";
     static final double VERIFY_TOLERANCE = 0.01;
     private static final Pattern T_WORD = Pattern.compile("(?i)(?<![A-Z])T\\s*0*(\\d+)");
     private static final int PIN_RETRIES = 3;
@@ -97,14 +105,18 @@ public final class ToolChangeRoutine {
     /**
      * @param tool       tool id now in the collet (e.g. {@code T21}), null if unknown
      * @param label      operator text, e.g. {@code T21 Whiteside RU1600 1/8 in upcut}
-     * @param triggerZ   BitSetter trigger machine Z of the new tool ({@code S_new})
-     * @param wcoZBefore G54 Z before the change
-     * @param wcoZ       G54 Z set for the new tool ({@code S_new + ref}), as read back
-     * @param ref        the BitSetter reference used
-     * @param returnXy   machine XY returned to (pre-change XY)
+     * @param triggerZ   BitSetter trigger machine Z of the new tool ({@code S_new}); null when not measured
+     * @param wcoZBefore G54 Z before the change; null when not measured
+     * @param wcoZ       G54 Z set for the new tool ({@code S_new + ref}), as read back; null when not measured
+     * @param ref        the BitSetter reference used; null when not measured
+     * @param returnXy   machine XY returned to (pre-change XY); null when the machine didn't move
+     * @param measured   false when D22 skipped the change (same tool, length known)
      */
-    public record Result(String tool, String label, double triggerZ, double wcoZBefore, double wcoZ, double ref,
-                         double[] returnXy) {
+    public record Result(String tool, String label, Double triggerZ, Double wcoZBefore, Double wcoZ, Double ref,
+                         double[] returnXy, boolean measured) {
+        static Result skipped(String tool, String label) {
+            return new Result(tool, label, null, null, null, null, null, false);
+        }
     }
 
     /** First-tool reference: {@code ref = WCO_z − S}. */
@@ -148,15 +160,23 @@ public final class ToolChangeRoutine {
         return info != null && info.name() != null && !info.name().isBlank() ? id + " " + info.name().trim() : id;
     }
 
+    /** The full tool change for an {@code M6} (no tool with a known length). */
+    public Result toolChange(String triggerCommand, int fileLine, JobModel job, Double ref)
+            throws InterceptAbortedException, RoutineException, InterruptedException {
+        return toolChange(triggerCommand, fileLine, job, ref, null);
+    }
+
     /**
      * The tool change for an {@code M6}.
      *
-     * @param triggerCommand the M6 line as streamed
-     * @param fileLine       its 1-based file line, or -1
-     * @param job            the loaded job (tool names, envelope check), or null
-     * @param ref            the BitSetter reference ({@code WCO_z − S}); null fails after parking
+     * @param triggerCommand  the M6 line as streamed
+     * @param fileLine        its 1-based file line, or -1
+     * @param job             the loaded job (tool names, envelope check), or null
+     * @param ref             the BitSetter reference ({@code WCO_z − S}); null fails after parking
+     * @param knownLengthTool the tool in the collet whose length is known (D22), or null; when the M6 asks for this
+     *                        tool only the tool word is sent
      */
-    public Result toolChange(String triggerCommand, int fileLine, JobModel job, Double ref)
+    public Result toolChange(String triggerCommand, int fileLine, JobModel job, Double ref, String knownLengthTool)
             throws InterceptAbortedException, RoutineException, InterruptedException {
         int number = toolNumber(triggerCommand);
         if (number < 0 && job != null && fileLine > 0) {
@@ -164,6 +184,9 @@ public final class ToolChangeRoutine {
         }
         String tool = number > 0 ? (job != null ? job.toolId(number) : ToolInfo.canonicalId(number)) : null;
         String label = toolLabel(job, number);
+        if (number > 0 && knownLengthTool != null && ToolInfo.parseNumber(knownLengthTool) == number) {
+            return confirmSameTool(triggerCommand, fileLine, number, tool, label);
+        }
         double safe = profile.safeZ();
         double[] pre = io.machinePosition();
         if (pre == null) {
@@ -197,8 +220,16 @@ public final class ToolChangeRoutine {
         events.tool(req);
 
         if (ref == null) {
-            throw new RoutineException("No BitSetter reference: measure the first tool's reference (after BitZero Z) "
-                    + "before running a multi-tool job. The machine is parked at safe Z with the spindle off.");
+            String why = "No BitSetter reference: measure the first tool's reference (after BitZero Z) before running "
+                    + "a multi-tool job. The machine is parked at safe Z with the spindle off.";
+            // the UGS dialog shows only "interception failed" for a failure: say why first (Abort cancels the job)
+            prompter.ask(new InterceptorPrompt(STEP_NO_REFERENCE, List.of(UserResponse.CONTINUE, UserResponse.ABORT),
+                    "No BitSetter reference",
+                    "The job asks for " + label + ", but there is no BitSetter reference to set its Z from.\n\n"
+                            + "The spindle is off and the machine is parked at safe Z. Nothing was measured or cut.\n\n"
+                            + "Press Abort to cancel the job, or Continue to leave it paused here. Then zero Z on the "
+                            + "stock (BitZero), measure the first tool's reference and start the job again."));
+            throw new RoutineException(why);
         }
 
         prompter.ask(new InterceptorPrompt(STEP_CHANGE, List.of(UserResponse.CONTINUE, UserResponse.ABORT),
@@ -242,7 +273,7 @@ public final class ToolChangeRoutine {
 
             send("G53 G0 X" + f3(preXy[0]) + " Y" + f3(preXy[1]));
             send("G4 P0");
-            return new Result(tool, label, s, BitSetter.round3(wcoZBefore), readZ, ref, preXy);
+            return new Result(tool, label, s, BitSetter.round3(wcoZBefore), readZ, ref, preXy, true);
         } catch (MachineIo.MachineException e) {
             retreat();
             throw new RoutineException("tool change failed: " + e.getMessage(), e);
@@ -250,6 +281,25 @@ public final class ToolChangeRoutine {
             retreat();
             throw e;
         }
+    }
+
+    /** D22: the requested tool is in the collet with a known length; send its tool word and carry on. */
+    private Result confirmSameTool(String triggerCommand, int fileLine, int number, String tool, String label)
+            throws RoutineException, InterruptedException {
+        try {
+            if (toolNumber(triggerCommand) >= 0) {
+                send("T" + number);
+            }
+        } catch (MachineIo.MachineException e) {
+            throw new RoutineException("tool change: could not send the tool word: " + e.getMessage(), e);
+        }
+        JsonObject d = toolData("confirmed", tool);
+        d.addProperty("label", label);
+        d.addProperty("file_line", fileLine > 0 ? fileLine : null);
+        d.addProperty("measurement_skipped", true);
+        d.addProperty("note", NOTE_SKIPPED);
+        events.tool(d);
+        return Result.skipped(tool, label);
     }
 
     /**

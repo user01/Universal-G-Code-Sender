@@ -37,6 +37,8 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class BitSetterInterceptorTest {
@@ -45,6 +47,7 @@ public class BitSetterInterceptorTest {
     private final List<String> outcomes = new ArrayList<>();
     private boolean enabled = true;
     private Double ref = 10.0;
+    private String known;
 
     private final BitSetterInterceptor.Host host = new BitSetterInterceptor.Host() {
         @Override
@@ -65,6 +68,11 @@ public class BitSetterInterceptorTest {
         @Override
         public Double reference() {
             return ref;
+        }
+
+        @Override
+        public String knownLengthTool() {
+            return known;
         }
 
         @Override
@@ -123,6 +131,16 @@ public class BitSetterInterceptorTest {
     }
 
     @Test
+    public void sameToolWithKnownLengthSkipsParkPromptAndProbe() throws Exception {
+        known = "T21";
+        InterceptContext ctx = context(UserResponse.CONTINUE);
+        interceptor.execute(ctx);
+        assertEquals(List.of("changed T21 null 1"), outcomes);
+        assertEquals(List.of("T21"), m.log);
+        verify(ctx, never()).awaitUserPrompt(any(InterceptorPrompt.class));
+    }
+
+    @Test
     public void abortIsPassedToTheService() throws Exception {
         try {
             interceptor.execute(context(UserResponse.ABORT));
@@ -146,5 +164,7 @@ public class BitSetterInterceptorTest {
             assertTrue(expected.getMessage().contains("No BitSetter reference"));
         }
         assertEquals(List.of("failed"), outcomes);
+        assertEquals("G4 P0", m.log.get(m.log.size() - 1)); // parked, spindle off
+        assertFalse(m.spindleOn);
     }
 }

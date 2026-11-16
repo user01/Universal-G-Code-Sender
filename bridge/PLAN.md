@@ -115,6 +115,9 @@ Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clea
 - D17 **Upstream core edits are approved** (P1, P3, P4 and any others needed). Keep each small and listed.
 - D18 **The dev GUI may run** with an isolated home (`bridge/.dev-home`, so the installed UGS's settings are untouched) against the simulator over TCP. The machine isn't connected, so no live machine work yet.
 - D19 **No machine capture or measurements for now.** Proceed on sourced or assumed values, all tracked in `bridge/docs/machine-ledger.md` (BitZero V2 13 mm sourced; bore unknown, so XY corner probing stays simulator-only).
+- D20 **BitSetter tool changes are on by default** (stock UGS tool-change handling off while on); the operator can turn them off in the panel and the choice persists in `runtime.json` (a file from before D20, without `tool_changes_chosen`, is turned on).
+- D21 **Claude may switch the router off (`M5`, `S0`) but never on:** `M3`/`M4` and non-zero `S` are refused; the operator starts the router.
+- D22 **Skip the BitSetter measurement when the length is known:** an `M6` for the tool in the collet, measured in this connection with no reset/alarm/homing/reconnect/G54 Z change since, sends only the `T` word, logs `tool` `confirmed` with `measurement_skipped`, and doesn't notify. Any doubt runs the full change.
 
 ### Upstream patch candidates (from A), approved (D17); landed in W2 A2 (see the table above)
 - P3 a listener hook in `BufferedCommunicator.sendByteImmediately`, so real-time bytes (hold, resume, reset, overrides) are logged as tx. Without it, operator real-time bytes are invisible in the log.

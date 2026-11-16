@@ -110,6 +110,11 @@ public final class Messages {
         return s.append(". Confirm in UGS.").toString();
     }
 
+    public static String toolChangeNoReference(String file, int line) {
+        return "🔧 Tool change stopped: no BitSetter reference; parked at safe Z, spindle off" + where(file, line)
+                + ". Answer in UGS.";
+    }
+
     public static String toolChangeFailed(String file, int line) {
         return "🔧 Tool change routine failed; stream left paused" + where(file, line);
     }

@@ -101,6 +101,8 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
     public static final double ORIGIN_TOLERANCE = 0.01;
     private static final Pattern G54_LINE = Pattern.compile("\\[G54:([-0-9.]+),([-0-9.]+),([-0-9.]+)[^]]*]");
     private static final Pattern PRB_OK = Pattern.compile("\\[PRB:[^]]*:1]");
+    /** GRBL's (and grblHAL's) welcome line: the controller was reset. */
+    private static final Pattern WELCOME = Pattern.compile("(?i)^\\s*grbl");
 
     private static volatile JobRuntime current;
 
@@ -132,7 +134,10 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
                          OriginTracker.Check originCheck, ToolChangeOutcome lastToolChange, String profile) {
     }
 
-    /** The last tool change: outcome {@code changed}, {@code aborted}, {@code failed}, {@code interrupted}. */
+    /**
+     * The last tool change: outcome {@code changed}, {@code skipped} (D22: same tool, length known),
+     * {@code aborted}, {@code failed}, {@code interrupted}.
+     */
     public record ToolChangeOutcome(String outcome, String time, String tool, Double triggerMz, Double wcoZBefore,
                                     Double wcoZ, Double ref, double[] returnXy, String detail, List<String> sent) {
     }
@@ -162,6 +167,9 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
     private boolean homed;
     private boolean homingSeen;
     private boolean toolMeasuredThisConnection;
+    // D22: the tool whose length was measured in this connection and G54 Z right after; cleared by any doubt
+    private String knownLengthTool;
+    private Double knownLengthWcoZ;
     private ControllerState controllerState = ControllerState.DISCONNECTED;
     private double[] mpos;
     private ICommunicator communicator;
@@ -338,6 +346,7 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
         } else if (evt instanceof ProbeEvent) {
             origins.onProbe();
         } else if (evt instanceof AlarmEvent e) {
+            forgetToolLength();
             journal.onAlarm(e.getAlarm() == null ? null : e.getAlarm().toString());
         }
     }
@@ -346,6 +355,7 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
         ControllerState prev = controllerState;
         controllerState = s;
         if (s == ControllerState.DISCONNECTED) {
+            forgetToolLength();
             if (connected) {
                 connected = false;
                 journal.onStopped("disconnected");
@@ -358,11 +368,13 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
         }
         if (s == ControllerState.HOME) {
             homingSeen = true;
+            forgetToolLength();
         } else if (s == ControllerState.IDLE && (prev == ControllerState.HOME || homingSeen)) {
             homed = true;
             homingSeen = false;
         } else if (s == ControllerState.ALARM) {
             homingSeen = false;
+            forgetToolLength();
             if (journal.running()) {
                 journal.onAlarm("controller alarm");
             }
@@ -374,10 +386,25 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
         homed = false;
         homingSeen = false;
         toolMeasuredThisConnection = false;
+        forgetToolLength();
         connectCheck = null;
         connectCheckDone = false;
         origins.onConnect();
         attachCommunicator();
+        // D20: re-assert the option once a machine is connected (UGS's settings may have been loaded or changed
+        // since the runtime started)
+        applyToolChangeOption();
+    }
+
+    /** D22: any reset, alarm, homing or reconnect makes the measured tool length doubtful. */
+    private void forgetToolLength() {
+        knownLengthTool = null;
+        knownLengthWcoZ = null;
+    }
+
+    private void rememberToolLength(String tool, Double wcoZ) {
+        knownLengthTool = tool;
+        knownLengthWcoZ = wcoZ;
     }
 
     private void onStatus(ControllerStatus st) {
@@ -432,6 +459,7 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
         if (type == CommandEventType.COMMAND_COMPLETE && cmd.isOk() && line != null
                 && line.trim().equalsIgnoreCase("$H")) {
             homed = true;
+            forgetToolLength();
         }
     }
 
@@ -474,6 +502,8 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
             events.execute(() -> origins.observe(mmV, "$#"));
         } else if (PRB_OK.matcher(response).find()) {
             events.execute(origins::onProbe);
+        } else if (WELCOME.matcher(response).find()) {
+            events.execute(this::forgetToolLength);
         }
     }
 
@@ -596,6 +626,34 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
         return why.isEmpty() ? r.ref : null;
     }
 
+    /**
+     * D22: the tool in the collet when its length is known for certain: measured (reference or tool change) in this
+     * connection, no reset, alarm, homing or reconnect since, still the current tool, and G54 Z unchanged since the
+     * measurement. Anything else (or a runtime that doesn't answer) is null: the full tool change runs.
+     */
+    @Override
+    public String knownLengthTool() {
+        try {
+            return call(() -> {
+                if (!connected || knownLengthTool == null || knownLengthWcoZ == null || state.currentTool == null) {
+                    return null;
+                }
+                int n = com.willwinder.ugs.nbp.bridge.job.ToolInfo.parseNumber(knownLengthTool);
+                if (n <= 0 || n != com.willwinder.ugs.nbp.bridge.job.ToolInfo.parseNumber(state.currentTool)) {
+                    return null;
+                }
+                double[] wco = origins.currentWco();
+                if (wco == null || Math.abs(wco[2] - knownLengthWcoZ) > ORIGIN_TOLERANCE) {
+                    return null;
+                }
+                return knownLengthTool;
+            });
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "knownLengthTool", e);
+            return null;
+        }
+    }
+
     @Override
     public ToolChangeRoutine.Events events() {
         return new ToolChangeRoutine.Events() {
@@ -613,11 +671,20 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
 
     @Override
     public void toolChanged(ToolChangeRoutine.Result r, List<String> sent) {
+        if (!r.measured()) {
+            // D22: same tool, length known; nothing about the collet or G54 changed
+            lastToolChange = new ToolChangeOutcome("skipped", Instant.ofEpochMilli(clock.millis()).toString(),
+                    r.tool(), null, null, null, reference(), null, r.label() + ": " + ToolChangeRoutine.NOTE_SKIPPED,
+                    sent);
+            events.execute(() -> journal.setTool(r.tool()));
+            return;
+        }
         lastToolChange = new ToolChangeOutcome("changed", Instant.ofEpochMilli(clock.millis()).toString(), r.tool(),
                 r.triggerZ(), r.wcoZBefore(), r.wcoZ(), r.ref(), r.returnXy(), r.label(), sent);
         events.execute(() -> {
             state.currentTool = r.tool();
             toolMeasuredThisConnection = true;
+            rememberToolLength(r.tool(), r.wcoZ());
             saveState();
             journal.setTool(r.tool());
         });
@@ -627,6 +694,8 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
     public void toolChangeEnded(String outcome, String detail, List<String> sent) {
         lastToolChange = new ToolChangeOutcome(outcome, Instant.ofEpochMilli(clock.millis()).toString(), null, null,
                 null, null, reference(), null, detail, sent);
+        // the operator may have swapped the bit before the change ended: the length is no longer certain
+        events.execute(this::forgetToolLength);
     }
 
     // ---------------------------------------------------------------- tool-change option
@@ -634,6 +703,7 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
     /** The bridge's "BitSetter tool changes" option; while on, UGS's own tool-change handling is off. */
     public synchronized void setToolChangesEnabled(boolean on) {
         state.bitsetterToolChanges = on;
+        state.toolChangesChosen = true;
         applyToolChangeOption();
         saveState();
     }
@@ -894,6 +964,7 @@ public final class JobRuntime implements UGSEventListener, ICommunicatorListener
                     state.reference = ref;
                     state.currentTool = r.tool();
                     toolMeasuredThisConnection = true;
+                    rememberToolLength(r.tool(), r.wcoZ());
                     saveState();
                     journal.setReference(r.ref());
                     return null;

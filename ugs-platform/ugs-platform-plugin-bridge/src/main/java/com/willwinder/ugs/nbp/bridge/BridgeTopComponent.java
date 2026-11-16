@@ -48,6 +48,8 @@ public final class BridgeTopComponent extends TopComponent {
     private final JLabel stateLabel = new JLabel();
     private final javax.swing.JCheckBox toolChangeBox = new javax.swing.JCheckBox("BitSetter tool changes");
     private final Consumer<BridgeLock.State> lockListener = s -> SwingUtilities.invokeLater(this::refresh);
+    /** The panel can open before the job runtime has started: refresh until it has (the option is on by default, D20). */
+    private final javax.swing.Timer runtimeWait = new javax.swing.Timer(1000, e -> refresh());
 
     public BridgeTopComponent() {
         setName("Claude Bridge");
@@ -59,7 +61,7 @@ public final class BridgeTopComponent extends TopComponent {
         add(row, BorderLayout.NORTH);
         add(new javax.swing.JScrollPane(new AuthorityPanel()), BorderLayout.CENTER); // package E/F: levels, expiry, Claude's requests, API, pendant
         toolChangeBox.setToolTipText("M6 parks, asks for the tool, measures it on the BitSetter and sets Z "
-                + "(replaces UGS's own tool-change handling while on)");
+                + "(replaces UGS's own tool-change handling while on; on by default)");
         toolChangeBox.addActionListener(e -> {
             com.willwinder.ugs.nbp.bridge.runtime.JobRuntime rt = com.willwinder.ugs.nbp.bridge.runtime.JobRuntime.current();
             if (rt != null) {
@@ -85,6 +87,7 @@ public final class BridgeTopComponent extends TopComponent {
     @Override
     public void componentClosed() {
         BridgeService.lock().removeListener(lockListener);
+        runtimeWait.stop();
     }
 
     private void refresh() {
@@ -96,5 +99,10 @@ public final class BridgeTopComponent extends TopComponent {
         com.willwinder.ugs.nbp.bridge.runtime.JobRuntime rt = com.willwinder.ugs.nbp.bridge.runtime.JobRuntime.current();
         toolChangeBox.setEnabled(rt != null);
         toolChangeBox.setSelected(rt != null && rt.toolChangesEnabled());
+        if (rt == null && isOpened()) {
+            runtimeWait.start();
+        } else {
+            runtimeWait.stop();
+        }
     }
 }

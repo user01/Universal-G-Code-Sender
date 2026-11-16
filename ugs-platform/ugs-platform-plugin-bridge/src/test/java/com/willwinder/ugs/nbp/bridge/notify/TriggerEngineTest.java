@@ -210,6 +210,22 @@ public class TriggerEngineTest {
     }
 
     @Test
+    public void bitsetterInterceptorPromptsNotifyToo() {
+        startStream("/does/not/exist.nc", 100, 1);
+        assertEquals("🔧 Tool change: install T21 (exist.nc, line 9). Confirm in UGS.",
+                one(feed("event", 3, "{\"type\":\"interceptor\",\"state\":\"waiting_for_user\",\"interceptor\":"
+                        + "\"BitSetterInterceptor\",\"trigger\":\"T21 M6\",\"file_line\":9,\"step\":\"bridge.toolChange.change\"}")).text());
+        // the probe-pin re-prompt is part of the same change
+        assertTrue(feed("event", 4, "{\"type\":\"interceptor\",\"state\":\"waiting_for_user\",\"interceptor\":"
+                + "\"BitSetterInterceptor\",\"trigger\":\"T21 M6\",\"step\":\"bridge.toolChange.probePin\"}").isEmpty());
+        TriggerEngine.Notification n = one(feed("event", 5, "{\"type\":\"interceptor\",\"state\":\"waiting_for_user\","
+                + "\"interceptor\":\"BitSetterInterceptor\",\"trigger\":\"T21 M6\",\"file_line\":9,"
+                + "\"step\":\"bridge.toolChange.noReference\"}"));
+        assertEquals(Triggers.ALERT, n.level());
+        assertTrue(n.text(), n.text().contains("no BitSetter reference"));
+    }
+
+    @Test
     public void toolChangeFailedIsAnAlert() {
         TriggerEngine.Notification n = one(feed("event", 3, "{\"type\":\"interceptor\",\"state\":\"failed\","
                 + "\"interceptor\":\"ToolChangeInterceptor\",\"trigger\":\"M6\"}"));

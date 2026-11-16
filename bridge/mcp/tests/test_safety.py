@@ -113,6 +113,9 @@ ALLOWED: list[tuple[str, list[str]]] = [
     ("set offset L20", ["G10 L20 P1 Z13"]),
     ("queries", ["$G", "$#", "?"]),
     ("dwell and M5", ["G4 P0.5", "M5"]),
+    ("spindle off", ["M5"]),
+    ("spindle off with S0", ["M5 S0"]),
+    ("retract then spindle off", ["G53 G0 Z-5", "M05"]),
     ("comments", ["(retract) G53 G0 Z-5 ; done"]),
     ("probe then absolute move", ["G91 G38.2 Z-10 F100", "G90 G53 G0 Z-5"]),
     ("home alone", ["$H"]),
@@ -130,6 +133,10 @@ REFUSED: list[tuple[str, list[str], str]] = [
     ("T then M6", ["T2", "M6"], "tool_change"),
     ("spindle M3", ["M3 S10000"], "spindle"),
     ("spindle M4", ["M4"], "spindle"),
+    ("spindle M03", ["M03"], "spindle"),
+    ("spindle M3 after M5", ["M5", "M3"], "spindle"),
+    ("spindle speed alone", ["S12000"], "spindle"),
+    ("spindle speed with a move", ["G1 X-10 F500 S1000"], "spindle"),
     ("program end", ["M30"], "program_flow"),
     ("pause", ["M0"], "program_flow"),
     ("setting write", ["$130=845"], "setting_write"),
@@ -191,6 +198,30 @@ def test_checker_refuses(name: str, lines: list[str], rule: str) -> None:
     assert not c.ok
     assert rule in c.rules, c.message()
     assert c.message().startswith("Refused, nothing was sent:")
+
+
+def test_spindle_refusal_says_the_operator_starts_the_router() -> None:
+    for lines in (["M3 S10000"], ["M4"], ["S8000"]):
+        msg = _check(lines).message()
+        assert "the operator starts the router" in msg, msg
+        assert "M5" in msg, msg
+
+
+@pytest.mark.parametrize(
+    "machine",
+    [
+        replace(HOMED, homed=False),
+        replace(HOMED, state="Alarm", alarm="ALARM:5"),
+        replace(HOMED, state="Hold"),
+        replace(HOMED, probe_pin=None),
+    ],
+    ids=["unhomed", "alarm", "hold", "probe pin unknown"],
+)
+def test_spindle_off_needs_no_homing_or_idle(machine: Machine) -> None:
+    """M5 moves nothing: the motion-only rules (homed, Idle) don't apply; authority still does."""
+    c = check_motion(["M5"], machine, LIMITS, expect="router stops")
+    assert c.ok, c.message()
+    assert not check_motion(["M5"], replace(machine, level="query"), LIMITS, expect="x").ok
 
 
 MACHINE_REFUSALS: list[tuple[str, Machine, str]] = [
