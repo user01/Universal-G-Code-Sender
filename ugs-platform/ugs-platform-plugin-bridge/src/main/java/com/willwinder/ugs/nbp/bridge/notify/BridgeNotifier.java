@@ -84,8 +84,16 @@ public final class BridgeNotifier implements Notifier, AutoCloseable {
 
     /** Creates and starts the notifier for the bridge home of {@code log}. */
     public static BridgeNotifier start(SessionLog log) {
-        BridgeNotifier n = new BridgeNotifier(log, log.home().resolve(NotifyConfig.FILE_NAME), Sinks.newClient(),
-                Sinks.TELEGRAM_API, null, System::nanoTime, new TriggerEngine.JobModelTools());
+        return start(log, null);
+    }
+
+    /** Creates and starts the notifier, with live time estimates from {@code estimates} (null: progress by file lines). */
+    public static BridgeNotifier start(SessionLog log, com.willwinder.ugs.nbp.bridge.eta.EstimateCache estimates) {
+        HttpClient client = Sinks.newClient();
+        com.willwinder.ugs.nbp.bridge.eta.EtaTracker eta = estimates == null ? null
+                : new com.willwinder.ugs.nbp.bridge.eta.EtaTracker(estimates, System::nanoTime, java.time.Clock.systemDefaultZone());
+        BridgeNotifier n = new BridgeNotifier(log, log.home().resolve(NotifyConfig.FILE_NAME), client,
+                Sinks.TELEGRAM_API, null, System::nanoTime, new TriggerEngine.JobModelTools(), eta);
         n.start();
         return n;
     }
@@ -96,13 +104,18 @@ public final class BridgeNotifier implements Notifier, AutoCloseable {
      */
     BridgeNotifier(SessionLog log, Path configFile, HttpClient client, URI telegramBase, URI slackBase,
                    LongSupplier nanos, TriggerEngine.ToolLookup tools) {
+        this(log, configFile, client, telegramBase, slackBase, nanos, tools, null);
+    }
+
+    BridgeNotifier(SessionLog log, Path configFile, HttpClient client, URI telegramBase, URI slackBase,
+                   LongSupplier nanos, TriggerEngine.ToolLookup tools, com.willwinder.ugs.nbp.bridge.eta.EtaTracker eta) {
         this.log = log;
         this.configFile = configFile;
         this.client = client;
         this.telegramBase = telegramBase;
         this.slackBase = slackBase;
         this.nanos = nanos;
-        this.engine = new TriggerEngine(() -> config, nanos, tools);
+        this.engine = new TriggerEngine(() -> config, nanos, tools, eta);
         this.events = Executors.newSingleThreadScheduledExecutor(daemon("ugs-bridge-notify-events"));
         this.sender = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(SEND_QUEUE),
                 daemon("ugs-bridge-notify-send"));

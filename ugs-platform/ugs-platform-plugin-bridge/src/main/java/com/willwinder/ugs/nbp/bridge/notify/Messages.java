@@ -142,6 +142,84 @@ public final class Messages {
         return s.toString();
     }
 
+    /** "18:42" from an ISO date-time, or null. */
+    public static String clock(String iso) {
+        if (iso == null) {
+            return null;
+        }
+        try {
+            return java.time.OffsetDateTime.parse(iso).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    /** Job start with the planner estimate (D25). */
+    public static String jobStarted(String file, double machineS, int toolChanges, double toolChangeAutoS, String finish) {
+        StringBuilder s = new StringBuilder("▶ Started ").append(file == null ? "the job" : file).append(": about ")
+                .append(duration(machineS)).append(" of machine time");
+        if (toolChanges > 0) {
+            s.append(" + ").append(toolChanges).append(toolChanges == 1 ? " tool change" : " tool changes")
+                    .append(" (≈ ").append(duration(toolChangeAutoS)).append(" automatic, plus your time)");
+        }
+        if (finish != null) {
+            s.append(". Done ≈ ").append(finish);
+            if (toolChanges > 0) {
+                s.append(" if the tool changes are quick");
+            }
+        }
+        return s.append('.').toString();
+    }
+
+    /**
+     * Progress from the live estimate: "▶ 50 % — a.nc, T21 contour: ~21 min left, done ≈ 18:42 (+1 tool change)".
+     *
+     * @param percent null for a timed (every N minutes) message
+     */
+    public static String etaProgress(Integer percent, String file, String op, String tool, double remainingS,
+                                     String finish, int toolChangesLeft) {
+        StringBuilder s = new StringBuilder("▶ ");
+        if (percent != null) {
+            s.append(percent).append(" % — ");
+        }
+        s.append(file == null ? "job" : file);
+        String what = tool == null ? op : op == null ? tool : tool + " " + op;
+        if (what != null) {
+            s.append(", ").append(what);
+        }
+        s.append(": ~").append(duration(remainingS)).append(" left");
+        if (finish != null) {
+            s.append(", done ≈ ").append(finish);
+        }
+        if (toolChangesLeft > 0) {
+            s.append(" (+").append(toolChangesLeft).append(toolChangesLeft == 1 ? " tool change" : " tool changes")
+                    .append(" waiting on you)");
+        }
+        return s.toString();
+    }
+
+    /** Appended to a tool-change prompt: what is left once the operator continues. */
+    public static String afterToolChange(double remainingS, String finish, int toolChangesAfter) {
+        StringBuilder s = new StringBuilder(" After it: ~").append(duration(remainingS)).append(" left");
+        if (finish != null) {
+            s.append(", done ≈ ").append(finish).append(" if you continue now");
+        }
+        if (toolChangesAfter > 0) {
+            s.append(" (").append(toolChangesAfter).append(toolChangesAfter == 1 ? " more tool change)" : " more tool changes)");
+        }
+        return s.append('.').toString();
+    }
+
+    /** Appended to "Job finished": "; machine time 41 min, estimated 40 min (+3 %)". */
+    public static String actualVsEstimate(double machineS, double estimatedMachineS) {
+        if (estimatedMachineS <= 0) {
+            return "";
+        }
+        long pct = Math.round(100 * (machineS / estimatedMachineS - 1));
+        return "; machine time " + duration(machineS) + ", estimated " + duration(estimatedMachineS)
+                + " (" + (pct >= 0 ? "+" : "") + pct + " %)";
+    }
+
     public static String claudeMessage(String text) {
         return "💬 Claude: " + text;
     }

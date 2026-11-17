@@ -204,6 +204,66 @@ async def test_file_tools_round_trip(fake: FakeBridge, home: Path, tmp_path: Pat
     assert hashlib.sha256(nc.read_bytes()).hexdigest() == digest
 
 
+ESTIMATE = {
+    "version": 1,
+    "source": "grbl-planner",
+    "settings_from": "controller",
+    "total_s": 2520.0,
+    "machine_s": 2460.0,
+    "bitsetter_s": 60.0,
+    "naive_s": 2200.0,
+    "tools": [
+        {"tool": "T2", "number": 2, "name": "1/4 in downcut", "s": 1260.0},
+        {"tool": "T21", "number": 21, "name": None, "s": 1200.0},
+    ],
+    "ops": [
+        {
+            "index": 1,
+            "name": "rough",
+            "tool": "T2",
+            "first_line": 5,
+            "last_line": 90,
+            "start_s": 0.0,
+            "end_s": 1260.0,
+        },
+    ],
+    "tool_changes": [{"line": 4, "from": None, "to": "T2", "at_s": 0.0, "bitsetter_s": 30.0}],
+    "assumptions": ["planner look-ahead 14 blocks, buffer kept full by the sender"],
+    "line_end_s": [0.0, 1.0],
+}
+
+
+async def test_analyze_uses_the_bridge_planner_estimate_for_the_loaded_file(
+    fake: FakeBridge, home: Path, tmp_path: Path
+) -> None:
+    nc = tmp_path / "part.nc"
+    nc.write_text("G21 G90\nT2 M6\nG0 X0 Y0 Z5\nG1 Z-1 F300\nG1 X50 F1000\nM2\n")
+    digest = hashlib.sha256(nc.read_bytes()).hexdigest()
+    fake.file_estimate = ESTIMATE
+    async with Client(build_server(BridgeClient(home))) as client:
+        # another file is loaded in UGS: only the simple estimate
+        fake.file_info = {"path": "/other.nc", "sha256": "0" * 64, "lines": 3}
+        data = (await client.call_tool("analyze_file", {"path": str(nc)})).structured_content
+        assert data is not None
+        assert data["time"]["planner"] is None
+        assert "load this file in UGS" in data["time"]["note"]
+        # this file is loaded: the planner estimate is added
+        fake.file_info = {"path": str(nc), "sha256": digest, "lines": 6}
+        data = (await client.call_tool("analyze_file", {"path": str(nc)})).structured_content
+        assert data is not None
+        planner = data["time"]["planner"]
+        assert planner["machine_min"] == 41.0
+        assert planner["tool_change_auto_min"] == 1.0
+        assert planner["settings_from"] == "controller"
+        assert planner["tools"][0] == {"tool": "T2", "name": "1/4 in downcut", "min": 21.0}
+        assert planner["ops"][0]["min"] == 21.0
+        assert (
+            "Planner estimate (bridge, GRBL accelerations, settings from the controller): 41 min"
+            " of machine time + 1 tool change (≈ 60 s automatic, plus the operator's time);"
+            " per tool: T2 21 min, T21 20 min." in data["summary"]
+        )
+
+
 async def test_analyze_works_offline(home: Path, tmp_path: Path) -> None:
     nc = tmp_path / "a.nc"
     nc.write_text("G0 X0 Y0 Z5\nG1 Z-1 F100\nM2\n")

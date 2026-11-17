@@ -154,6 +154,13 @@
     },
     "session": {
       "type": "string"
+    },
+    "eta": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "GET /job/state only (not in the journal file): live progress and finish-time prediction of the current or last stream (PLAN D25; bridge/docs/api.md)"
     }
   },
   "required": [

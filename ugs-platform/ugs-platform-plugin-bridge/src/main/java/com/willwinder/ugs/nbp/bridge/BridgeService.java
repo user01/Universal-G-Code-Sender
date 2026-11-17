@@ -54,6 +54,7 @@ public final class BridgeService implements Runnable {
     private static volatile BackendMachineLink machineLink;
     private static volatile PendantWatch pendantWatch;
     private static volatile BridgeNotifier notifier;
+    private static volatile com.willwinder.ugs.nbp.bridge.eta.EstimateCache estimates;
 
     public static BridgeLock lock() {
         return LOCK;
@@ -127,7 +128,9 @@ public final class BridgeService implements Runnable {
         log.append(LogRecord.Kind.SESSION, LogRecord.Src.BRIDGE, start);
         authority = new Authority(LOCK, log, Clock.systemDefaultZone()); // logs every lock and level change
         authority.logStart();
-        notifier = BridgeNotifier.start(log);
+        com.willwinder.ugs.nbp.bridge.api.ProfileSource profiles = new com.willwinder.ugs.nbp.bridge.api.ProfileSource(log.home());
+        estimates = new com.willwinder.ugs.nbp.bridge.eta.EstimateCache(profiles::model);
+        notifier = BridgeNotifier.start(log, estimates);
 
         if (backend != null) {
             c.attach(backend);
@@ -154,6 +157,10 @@ public final class BridgeService implements Runnable {
             notifier.close();
             notifier = null;
         }
+        if (estimates != null) {
+            estimates.close();
+            estimates = null;
+        }
         if (c != null) {
             c.detach();
             log.append(LogRecord.Kind.SESSION, LogRecord.Src.BRIDGE, c.sessionData("bridge_stop"));
@@ -171,7 +178,8 @@ public final class BridgeService implements Runnable {
         }
         try {
             BackendMachineLink link = new BackendMachineLink(backend, ORIGINS, capture);
-            ApiHost host = new ApiHost(log.home(), log, authority, link, new SwingOperatorPrompts(), () -> notifier != null ? notifier : com.willwinder.ugs.nbp.bridge.api.BridgeApi.NO_NOTIFIER);
+            ApiHost host = new ApiHost(log.home(), log, authority, link, new SwingOperatorPrompts(),
+                    () -> notifier != null ? notifier : com.willwinder.ugs.nbp.bridge.api.BridgeApi.NO_NOTIFIER, estimates);
             host.start();
             machineLink = link;
             apiHost = host;

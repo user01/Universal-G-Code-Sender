@@ -19,6 +19,9 @@
 package com.willwinder.ugs.nbp.bridge.api;
 
 import com.willwinder.ugs.nbp.bridge.api.http.LiteHttpServer;
+import com.willwinder.ugs.nbp.bridge.eta.EstimateCache;
+import com.willwinder.ugs.nbp.bridge.eta.EtaEvents;
+import com.willwinder.ugs.nbp.bridge.eta.EtaTracker;
 import com.willwinder.ugs.nbp.bridge.log.LogRecord;
 import com.willwinder.ugs.nbp.bridge.log.SessionLog;
 import com.willwinder.ugs.nbp.bridge.notify.Notifier;
@@ -58,6 +61,11 @@ public final class ApiHost implements AutoCloseable {
     private final ScheduledExecutorService timer;
     private final ExecutorService reactions;
     private final String mcpToken;
+    private final EstimateCache estimates;
+    private final boolean ownEstimates;
+    private final EtaTracker eta;
+    private final EtaEvents etaEvents;
+    private final java.util.function.Consumer<com.willwinder.ugs.nbp.bridge.log.LogRecord> etaListener;
     private volatile int port = -1;
 
     /**
@@ -66,12 +74,23 @@ public final class ApiHost implements AutoCloseable {
      */
     public ApiHost(Path home, SessionLog log, Authority authority, MachineLink link, OperatorPrompts prompts,
                    Supplier<Notifier> notifier) {
-        this(home, log, authority, link, prompts, notifier, System::currentTimeMillis);
+        this(home, log, authority, link, prompts, notifier, (EstimateCache) null);
+    }
+
+    /** @param estimates time estimates shared with the notifier, or null for the API's own */
+    public ApiHost(Path home, SessionLog log, Authority authority, MachineLink link, OperatorPrompts prompts,
+                   Supplier<Notifier> notifier, EstimateCache estimates) {
+        this(home, log, authority, link, prompts, notifier, System::currentTimeMillis, estimates);
     }
 
     /** @param millis wall clock for the status-report age (tests pass a fake one) */
     ApiHost(Path home, SessionLog log, Authority authority, MachineLink link, OperatorPrompts prompts,
             Supplier<Notifier> notifier, java.util.function.LongSupplier millis) {
+        this(home, log, authority, link, prompts, notifier, millis, null);
+    }
+
+    ApiHost(Path home, SessionLog log, Authority authority, MachineLink link, OperatorPrompts prompts,
+            Supplier<Notifier> notifier, java.util.function.LongSupplier millis, EstimateCache estimates) {
         this.home = home;
         this.log = log;
         this.link = link;
@@ -79,13 +98,20 @@ public final class ApiHost implements AutoCloseable {
         this.state = new StateTracker(millis);
         this.mcpToken = Discovery.newToken();
         String viewerToken = Discovery.newToken();
+        ProfileSource profile = new ProfileSource(home);
+        this.ownEstimates = estimates == null;
+        this.estimates = estimates != null ? estimates : new EstimateCache(profile::model);
+        this.eta = new EtaTracker(this.estimates, () -> millis.getAsLong() * 1_000_000L, java.time.Clock.systemDefaultZone());
+        this.etaEvents = new EtaEvents(eta, log);
+        this.etaListener = eta::accept;
         this.commands = new CommandService(log, link, authority, prompts, this::queryStatus);
-        this.api = new BridgeApi(new BridgeApi.Deps(log, authority, state, commands, link, prompts, new ProfileSource(home),
-                home, notifier, () -> latestJournal(log.logsRoot())), mcpToken, viewerToken);
+        this.api = new BridgeApi(new BridgeApi.Deps(log, authority, state, commands, link, prompts, profile,
+                home, notifier, () -> latestJournal(log.logsRoot()), eta, this.estimates), mcpToken, viewerToken);
         this.server = new LiteHttpServer(api, api);
         this.timer = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "ugs-bridge-authority-timer"));
         this.reactions = Executors.newSingleThreadExecutor(r -> daemon(r, "ugs-bridge-machine-reactions"));
         log.addListener(state);
+        log.addListener(etaListener);
         // Machine events arrive on UGS's threads (inside the capture); react on our own thread.
         state.addTriggerListener((trigger, why) -> reactions.execute(() -> onMachine(trigger, why)));
     }
@@ -123,6 +149,7 @@ public final class ApiHost implements AutoCloseable {
         Discovery.write(home, port, mcpToken, BridgeApi.BASE);
         timer.scheduleAtFixedRate(authority::checkExpiry, 5, 5, TimeUnit.SECONDS);
         timer.scheduleAtFixedRate(this::checkSilence, 2, 2, TimeUnit.SECONDS);
+        timer.scheduleAtFixedRate(etaEvents::tick, 2, 2, TimeUnit.SECONDS);
         LOGGER.info(() -> "ugs-bridge API on http://127.0.0.1:" + port + BridgeApi.BASE + " (viewer "
                 + (StaticFiles.available() ? "packaged" : "missing") + ")");
     }
@@ -132,6 +159,10 @@ public final class ApiHost implements AutoCloseable {
         timer.shutdownNow();
         reactions.shutdownNow();
         log.removeListener(state);
+        log.removeListener(etaListener);
+        if (ownEstimates) {
+            estimates.close();
+        }
         commands.stop();
         api.closeAll();
         server.close();
@@ -215,6 +246,16 @@ public final class ApiHost implements AutoCloseable {
 
     public BridgeApi api() {
         return api;
+    }
+
+    /** Live progress and finish time of the streaming job. */
+    public EtaTracker eta() {
+        return eta;
+    }
+
+    /** Emits {@code eta} event records (the timer calls it every 2 s; tests call it directly). */
+    public EtaEvents etaEvents() {
+        return etaEvents;
     }
 
     public CommandService commands() {

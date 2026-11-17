@@ -74,9 +74,11 @@ public class NotifyConfigTest {
         assertTrue(c.streamFinished && c.streamError && c.alarm && c.toolChangeWaiting && c.connectionLost
                 && c.claudeAuthorityRequest && c.claudeMessage);
         assertEquals(60, c.feedHoldSeconds);
-        assertEquals(0, c.progressEveryPercent);
+        assertEquals(25, c.progressEveryPercent);
+        assertEquals(0, c.progressEveryMinutes);
+        assertTrue(c.telegramCommands && c.telegramAllowPause);
         assertEquals(6, c.rateLimitPerMinute);
-        assertFalse(c.enabled(Triggers.PROGRESS));
+        assertTrue(c.enabled(Triggers.PROGRESS));
         assertTrue(c.enabled(Triggers.FEED_HOLD));
     }
 

@@ -56,6 +56,8 @@ public final class NotifyConfig {
     public static final int DEFAULT_RATE_LIMIT = 6;
     public static final int DEFAULT_DEDUP_SECONDS = 120;
     public static final int DEFAULT_FEED_HOLD_SECONDS = 60;
+    /** Progress messages every 25 % of the estimated machine time unless notify.json says otherwise (D25). */
+    public static final int DEFAULT_PROGRESS_PERCENT = 25;
 
     private static final Pattern BOT_TOKEN = Pattern.compile("^\\d{3,}:[A-Za-z0-9_-]{20,}$");
     private static final Pattern CHAT_ID = Pattern.compile("^(-?\\d{1,20}|@[A-Za-z][A-Za-z0-9_]{3,})$");
@@ -80,6 +82,10 @@ public final class NotifyConfig {
     public final boolean telegramEnabled;
     public final String botToken;
     public final String chatId;
+    /** Answer {@code status}, {@code eta}, ... sent to the bot from the configured chat (PLAN D26). */
+    public final boolean telegramCommands;
+    /** Accept {@code pause} (feed hold) from the configured chat. */
+    public final boolean telegramAllowPause;
     public final boolean slackEnabled;
     public final String webhookUrl;
     // triggers
@@ -92,6 +98,8 @@ public final class NotifyConfig {
     public final boolean claudeAuthorityRequest;
     public final boolean claudeMessage;
     public final int progressEveryPercent;
+    /** Progress message every N minutes of machine time (0 = off). */
+    public final int progressEveryMinutes;
     // limits
     public final int rateLimitPerMinute;
     public final int dedupSeconds;
@@ -105,6 +113,8 @@ public final class NotifyConfig {
         this.telegramEnabled = b.telegramEnabled;
         this.botToken = b.botToken;
         this.chatId = b.chatId;
+        this.telegramCommands = b.telegramCommands;
+        this.telegramAllowPause = b.telegramAllowPause;
         this.slackEnabled = b.slackEnabled;
         this.webhookUrl = b.webhookUrl;
         this.streamFinished = b.streamFinished;
@@ -116,6 +126,7 @@ public final class NotifyConfig {
         this.claudeAuthorityRequest = b.claudeAuthorityRequest;
         this.claudeMessage = b.claudeMessage;
         this.progressEveryPercent = b.progressEveryPercent;
+        this.progressEveryMinutes = b.progressEveryMinutes;
         this.rateLimitPerMinute = b.rateLimitPerMinute;
         this.dedupSeconds = b.dedupSeconds;
         this.source = source == null ? new JsonObject() : source.deepCopy();
@@ -126,7 +137,7 @@ public final class NotifyConfig {
         this.problems = List.copyOf(p);
     }
 
-    /** Defaults of the example file: both sinks off, every trigger on except progress. */
+    /** Defaults of the example file: both sinks off, every trigger on, progress every 25 %. */
     public static NotifyConfig defaults() {
         return new Builder().build();
     }
@@ -141,6 +152,8 @@ public final class NotifyConfig {
         b.telegramEnabled = telegramEnabled;
         b.botToken = botToken;
         b.chatId = chatId;
+        b.telegramCommands = telegramCommands;
+        b.telegramAllowPause = telegramAllowPause;
         b.slackEnabled = slackEnabled;
         b.webhookUrl = webhookUrl;
         b.streamFinished = streamFinished;
@@ -152,6 +165,7 @@ public final class NotifyConfig {
         b.claudeAuthorityRequest = claudeAuthorityRequest;
         b.claudeMessage = claudeMessage;
         b.progressEveryPercent = progressEveryPercent;
+        b.progressEveryMinutes = progressEveryMinutes;
         b.rateLimitPerMinute = rateLimitPerMinute;
         b.dedupSeconds = dedupSeconds;
         b.source = source;
@@ -187,6 +201,8 @@ public final class NotifyConfig {
             b.telegramEnabled = bool(tg, "enabled", false, problems, "telegram.enabled");
             b.botToken = str(tg, "bot_token", "", problems);
             b.chatId = str(tg, "chat_id", "", problems);
+            b.telegramCommands = bool(tg, "commands_enabled", true, problems, "telegram.commands_enabled");
+            b.telegramAllowPause = bool(tg, "allow_pause", true, problems, "telegram.allow_pause");
         }
         JsonObject sl = obj(o, "slack", problems);
         if (sl != null) {
@@ -204,7 +220,8 @@ public final class NotifyConfig {
             b.claudeAuthorityRequest = bool(t, Triggers.CLAUDE_AUTHORITY_REQUEST, true, problems,
                     "triggers." + Triggers.CLAUDE_AUTHORITY_REQUEST);
             b.claudeMessage = bool(t, Triggers.CLAUDE_MESSAGE, true, problems, "triggers." + Triggers.CLAUDE_MESSAGE);
-            b.progressEveryPercent = intIn(t, "progress_every_percent", 0, 0, 100, problems);
+            b.progressEveryPercent = intIn(t, "progress_every_percent", DEFAULT_PROGRESS_PERCENT, 0, 100, problems);
+            b.progressEveryMinutes = intIn(t, "progress_every_minutes", 0, 0, 1440, problems);
         }
         b.rateLimitPerMinute = intIn(o, "rate_limit_per_minute", DEFAULT_RATE_LIMIT, 1, 60, problems);
         b.dedupSeconds = intIn(o, "dedup_seconds", DEFAULT_DEDUP_SECONDS, 0, 3600, problems);
@@ -256,7 +273,7 @@ public final class NotifyConfig {
             case Triggers.CONNECTION_LOST -> connectionLost;
             case Triggers.CLAUDE_AUTHORITY_REQUEST -> claudeAuthorityRequest;
             case Triggers.CLAUDE_MESSAGE -> claudeMessage;
-            case Triggers.PROGRESS -> progressEveryPercent > 0;
+            case Triggers.PROGRESS -> progressEveryPercent > 0 || progressEveryMinutes > 0;
             default -> true;
         };
     }
@@ -339,6 +356,8 @@ public final class NotifyConfig {
         tg.addProperty("enabled", telegramEnabled);
         tg.addProperty("bot_token", botToken);
         tg.addProperty("chat_id", chatId);
+        tg.addProperty("commands_enabled", telegramCommands);
+        tg.addProperty("allow_pause", telegramAllowPause);
         o.add("telegram", tg);
         JsonObject sl = o.has("slack") && o.get("slack").isJsonObject() ? o.getAsJsonObject("slack") : new JsonObject();
         sl.addProperty("enabled", slackEnabled);
@@ -354,6 +373,7 @@ public final class NotifyConfig {
         t.addProperty(Triggers.CLAUDE_AUTHORITY_REQUEST, claudeAuthorityRequest);
         t.addProperty(Triggers.CLAUDE_MESSAGE, claudeMessage);
         t.addProperty("progress_every_percent", progressEveryPercent);
+        t.addProperty("progress_every_minutes", progressEveryMinutes);
         o.add("triggers", t);
         o.addProperty("rate_limit_per_minute", rateLimitPerMinute);
         if (o.has("dedup_seconds") || dedupSeconds != DEFAULT_DEDUP_SECONDS) {
@@ -449,6 +469,8 @@ public final class NotifyConfig {
         public boolean telegramEnabled;
         public String botToken = "123456789:REPLACE_WITH_BOT_TOKEN_FROM_BOTFATHER";
         public String chatId = "REPLACE_WITH_CHAT_ID";
+        public boolean telegramCommands = true;
+        public boolean telegramAllowPause = true;
         public boolean slackEnabled;
         public String webhookUrl = "https://hooks.slack.com/services/REPLACE/WITH/WEBHOOK";
         public boolean streamFinished = true;
@@ -459,7 +481,8 @@ public final class NotifyConfig {
         public boolean connectionLost = true;
         public boolean claudeAuthorityRequest = true;
         public boolean claudeMessage = true;
-        public int progressEveryPercent;
+        public int progressEveryPercent = DEFAULT_PROGRESS_PERCENT;
+        public int progressEveryMinutes;
         public int rateLimitPerMinute = DEFAULT_RATE_LIMIT;
         public int dedupSeconds = DEFAULT_DEDUP_SECONDS;
 

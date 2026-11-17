@@ -281,7 +281,9 @@ public class BridgeNotifierTest {
                     assertEquals(d.toString(), "ok", d.getAsJsonObject("sinks").get("slack").getAsString());
                 }
             }
-            assertEquals(8, server.requests.size());
+            // 4 notifications to 2 sinks, plus one progress message ("50 %": line 11 of 16, default every 25 %)
+            assertEquals(1, notifyData().stream().filter(trigger(Triggers.PROGRESS)).count());
+            assertEquals(10, server.requests.size());
         } finally {
             capture.detach();
         }

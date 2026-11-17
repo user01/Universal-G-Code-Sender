@@ -20,6 +20,7 @@ package com.willwinder.ugs.nbp.bridge.notify;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.willwinder.ugs.nbp.bridge.eta.EtaTracker;
 import com.willwinder.ugs.nbp.bridge.job.JobModel;
 import com.willwinder.ugs.nbp.bridge.job.ToolInfo;
 import com.willwinder.ugs.nbp.bridge.log.LogRecord.Kind;
@@ -66,6 +67,10 @@ final class TriggerEngine {
     private final Supplier<NotifyConfig> config;
     private final LongSupplier nanos;
     private final ToolLookup tools;
+    /** Live estimate (D25), or null: progress then counts file lines. */
+    private final EtaTracker eta;
+    private boolean startAnnounced;
+    private int lastMinuteStep;
 
     // connection / stream state
     private String port;
@@ -93,15 +98,25 @@ final class TriggerEngine {
     private long pendingUgsAlarmAt;
 
     TriggerEngine(Supplier<NotifyConfig> config, LongSupplier nanos, ToolLookup tools) {
+        this(config, nanos, tools, null);
+    }
+
+    TriggerEngine(Supplier<NotifyConfig> config, LongSupplier nanos, ToolLookup tools, EtaTracker eta) {
         this.config = config;
         this.nanos = nanos;
         this.tools = tools;
+        this.eta = eta;
+    }
+
+    /** The live estimate the engine uses, or null. */
+    EtaTracker eta() {
+        return eta;
     }
 
     /** Record kinds the engine cares about (the notifier filters before parsing). */
     static boolean relevant(String kind) {
         return switch (kind) {
-            case Kind.SESSION, Kind.EVENT, Kind.FILE, Kind.TX, Kind.COMMAND -> true;
+            case Kind.SESSION, Kind.EVENT, Kind.FILE, Kind.TX, Kind.COMMAND, Kind.RX, Kind.STATUS -> true;
             default -> false;
         };
     }
@@ -113,6 +128,9 @@ final class TriggerEngine {
         Double mono = record.has("mono") && record.get("mono").isJsonPrimitive() ? record.get("mono").getAsDouble() : null;
         if (kind == null) {
             return out;
+        }
+        if (eta != null) {
+            eta.onRecord(record);
         }
         switch (kind) {
             case Kind.SESSION -> onSession(d, out);
@@ -143,7 +161,55 @@ final class TriggerEngine {
             }
             pendingUgsAlarm = null;
         }
+        etaProgress(out);
         return out;
+    }
+
+    /** Start message and progress steps from the live estimate (D25). */
+    private void etaProgress(List<Notification> out) {
+        EtaTracker.Snapshot s = eta == null ? null : eta.snapshot();
+        if (s == null || !s.active() || s.estimate() == null || s.adjustedRemainingS() == null) {
+            return;
+        }
+        NotifyConfig cfg = config.get();
+        String finish = Messages.clock(s.predictedFinish());
+        if (!startAnnounced) {
+            startAnnounced = true;
+            int changes = s.estimate().toolChanges().size();
+            out.add(new Notification(Triggers.PROGRESS, Messages.jobStarted(fileName(), s.estimate().machineS(),
+                    changes, s.estimate().bitsetterS(), finish), Triggers.INFO));
+            return;
+        }
+        Double f = s.fraction();
+        String op = s.currentOp() == null ? null : s.currentOp().name();
+        int every = cfg.progressEveryPercent;
+        if (every > 0 && f != null) {
+            int percent = (int) Math.floor(f * 100);
+            int step = percent / every;
+            if (step > lastProgressStep && percent < 100) {
+                lastProgressStep = step;
+                out.add(new Notification(Triggers.PROGRESS, Messages.etaProgress(step * every, fileName(), op,
+                        s.currentTool(), s.adjustedRemainingS(), finish, s.toolChangesRemaining()), Triggers.INFO));
+                return;
+            }
+        }
+        int minutes = cfg.progressEveryMinutes;
+        if (minutes > 0) {
+            int step = (int) Math.floor(s.machineS() / 60.0 / minutes);
+            if (step > lastMinuteStep) {
+                lastMinuteStep = step;
+                out.add(new Notification(Triggers.PROGRESS, Messages.etaProgress(null, fileName(), op,
+                        s.currentTool(), s.adjustedRemainingS(), finish, s.toolChangesRemaining()), Triggers.INFO));
+            }
+        }
+    }
+
+    private boolean etaKnown() {
+        if (eta == null) {
+            return false;
+        }
+        EtaTracker.Snapshot s = eta.snapshot();
+        return s != null && s.active() && s.estimate() != null;
     }
 
     // ---------------------------------------------------------------- records
@@ -217,6 +283,8 @@ final class TriggerEngine {
                 streamLines = null;
                 lastFileLine = 0;
                 lastProgressStep = 0;
+                lastMinuteStep = 0;
+                startAnnounced = false;
                 lastError = null;
             }
             case "paused_on_error" -> {
@@ -227,8 +295,12 @@ final class TriggerEngine {
             case "complete" -> {
                 if (streaming) {
                     Double secs = streamStartMono != null && mono != null ? mono - streamStartMono : null;
-                    out.add(new Notification(Triggers.STREAM_FINISHED,
-                            Messages.streamFinished(fileName(), secs, streamLines), Triggers.INFO));
+                    String text = Messages.streamFinished(fileName(), secs, streamLines);
+                    EtaTracker.Snapshot s = eta == null ? null : eta.snapshot();
+                    if (s != null && s.estimate() != null) {
+                        text += Messages.actualVsEstimate(s.machineS(), s.estimate().machineS());
+                    }
+                    out.add(new Notification(Triggers.STREAM_FINISHED, text, Triggers.INFO));
                 }
                 streaming = false;
             }
@@ -262,7 +334,7 @@ final class TriggerEngine {
         }
         lastFileLine = Math.max(lastFileLine, line);
         int every = config.get().progressEveryPercent;
-        if (!streaming || every <= 0 || streamLines == null || streamLines <= 0) {
+        if (!streaming || every <= 0 || streamLines == null || streamLines <= 0 || etaKnown()) {
             return;
         }
         int percent = (int) Math.min(100, (long) lastFileLine * 100 / streamLines);
@@ -325,7 +397,13 @@ final class TriggerEngine {
             if (desc == null && tool != null) {
                 desc = "T" + tool;
             }
-            out.add(new Notification(Triggers.TOOL_CHANGE_WAITING, Messages.toolChange(desc, fileName(), line), Triggers.WARN));
+            String text = Messages.toolChange(desc, fileName(), line);
+            EtaTracker.Snapshot s = eta == null ? null : eta.snapshot();
+            if (s != null && s.active() && s.adjustedRemainingS() != null) {
+                text += Messages.afterToolChange(s.adjustedRemainingS(), Messages.clock(s.predictedFinish()),
+                        s.toolChangesRemaining());
+            }
+            out.add(new Notification(Triggers.TOOL_CHANGE_WAITING, text, Triggers.WARN));
         } else if ("failed".equals(state)) {
             out.add(new Notification(Triggers.TOOL_CHANGE_WAITING, Messages.toolChangeFailed(fileName(), line), Triggers.ALERT));
         }

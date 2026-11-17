@@ -18,7 +18,14 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from ugs_mcp.bridge_client import BridgeClient, BridgeError
 from ugs_mcp.config import local_profile
-from ugs_mcp.describe import ERRORS, record_line, settings_text, status_text
+from ugs_mcp.describe import (
+    ERRORS,
+    planner_summary,
+    planner_time,
+    record_line,
+    settings_text,
+    status_text,
+)
 from ugs_mcp.gcode.analyze import analyze_path
 from ugs_mcp.gcode.prepare import PrepareError, prepare
 from ugs_mcp.motion_tools import register_motion_tools
@@ -216,6 +223,24 @@ def build_server(client: BridgeClient | None = None) -> MCPServer:
         result = await anyio.to_thread.run_sync(lambda: analyze_path(p, profile=profile, wco=wco))
         result["profile"] = source
         result["work_offset_used"] = list(wco) if wco else None
+        # The planner estimate (accelerations, cornering) comes from the bridge when UGS has this
+        # exact file loaded; otherwise only the simple distance/feed estimate is available.
+        planner = None
+        try:
+            loaded = await bridge.file()
+            if loaded and loaded.get("sha256") == result["file"]["sha256"]:
+                planner = await bridge.file_estimate()
+        except BridgeError:
+            planner = None
+        if planner:
+            result["time"]["planner"] = planner_time(planner)
+            result["summary"] += "\n" + planner_summary(planner)
+        else:
+            result["time"]["planner"] = None
+            result["time"]["note"] = (
+                "simple estimate only (distance / feed, no acceleration): load this file in UGS"
+                " for the bridge's planner estimate"
+            )
         return {"summary": result.pop("summary"), **result}
 
     @mcp.tool()

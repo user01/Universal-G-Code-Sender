@@ -258,6 +258,9 @@ public class TriggerEngineTest {
 
     @Test
     public void progressEveryNPercentOnlyWhenConfigured() {
+        NotifyConfig.Builder off = NotifyConfig.defaults().toBuilder();
+        off.progressEveryPercent = 0;
+        config.set(off.build());
         startStream("/x/a.nc", 1000, 0);
         for (int i = 1; i <= 1000; i++) {
             assertTrue(feed("tx", i, "{\"cmd_id\":\"u-" + i + "\",\"file_line\":" + i + "}").isEmpty());

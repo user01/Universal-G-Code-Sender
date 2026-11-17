@@ -3,7 +3,9 @@
   "telegram": {
     "enabled": false,
     "bot_token": "123456789:REPLACE_WITH_BOT_TOKEN_FROM_BOTFATHER",
-    "chat_id": "REPLACE_WITH_CHAT_ID"
+    "chat_id": "REPLACE_WITH_CHAT_ID",
+    "commands_enabled": true,
+    "allow_pause": true
   },
   "slack": {
     "enabled": false,
@@ -18,7 +20,8 @@
     "connection_lost": true,
     "claude_authority_request": true,
     "claude_message": true,
-    "progress_every_percent": 0
+    "progress_every_percent": 25,
+    "progress_every_minutes": 0
   },
   "rate_limit_per_minute": 6
 }

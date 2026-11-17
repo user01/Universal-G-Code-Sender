@@ -217,6 +217,17 @@ class BridgeClient:
                 return None
             raise
 
+    async def file_estimate(self, lines: bool = False) -> dict[str, Any] | None:
+        """``GET /file/estimate``: the planner time estimate of the loaded file (None if none)."""
+        try:
+            if lines:
+                return dict(await self.get("/file/estimate"))
+            return dict(await self.get("/file/estimate", lines=0))
+        except BridgeError as exc:
+            if exc.status in (404, 503):
+                return None
+            raise
+
     async def profile(self) -> dict[str, Any]:
         return dict(await self.get("/profile"))
 

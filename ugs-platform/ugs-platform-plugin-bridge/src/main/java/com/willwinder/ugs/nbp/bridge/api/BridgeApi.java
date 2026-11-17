@@ -58,6 +58,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import com.google.gson.JsonParser;
+import com.willwinder.ugs.nbp.bridge.eta.EstimateCache;
+import com.willwinder.ugs.nbp.bridge.eta.EtaTracker;
+import com.willwinder.ugs.nbp.bridge.job.estimate.Estimate;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -91,7 +95,8 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
     /** Everything the API reads from or acts on. */
     public record Deps(SessionLog log, Authority authority, StateTracker state, CommandService commands,
                        MachineLink link, OperatorPrompts prompts, ProfileSource profile, Path home,
-                       Supplier<Notifier> notifier, Supplier<Optional<Path>> journal) {
+                       Supplier<Notifier> notifier, Supplier<Optional<Path>> journal, EtaTracker eta,
+                       EstimateCache estimates) {
     }
 
     private final Deps d;
@@ -216,6 +221,7 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
                 yield f == null ? ApiErrors.notFound("no file loaded") : ok(f);
             }
             case "/file/content" -> fileContent();
+            case "/file/estimate" -> fileEstimate(req);
             case "/profile" -> {
                 String p = d.profile().json();
                 yield p == null ? ApiErrors.notFound("no machine profile") : HttpResponse.json(200, p);
@@ -493,14 +499,46 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
 
     private HttpResponse jobState() {
         Optional<Path> j = d.journal().get();
-        if (j.isEmpty()) {
+        EtaTracker.Snapshot eta = d.eta() == null ? null : d.eta().snapshot();
+        JsonObject out = null;
+        if (j.isPresent()) {
+            try {
+                out = JsonParser.parseString(Files.readString(j.get())).getAsJsonObject();
+            } catch (IOException | RuntimeException e) {
+                out = null;
+            }
+        }
+        if (out == null && eta == null) {
             return ApiErrors.notFound("no job journal");
         }
-        try {
-            return HttpResponse.json(200, Files.readString(j.get()));
-        } catch (IOException e) {
-            return ApiErrors.notFound("no job journal");
+        if (out == null) {
+            out = new JsonObject();
         }
+        out.add("eta", eta == null ? com.google.gson.JsonNull.INSTANCE : eta.toJson());
+        return ok(out);
+    }
+
+    /**
+     * {@code GET /file/estimate}: the GRBL planner time estimate of the loaded file (bridge/docs/api.md).
+     * {@code ?lines=0} leaves out {@code line_end_s}.
+     */
+    private HttpResponse fileEstimate(HttpRequest req) {
+        Path p = loadedPath();
+        if (p == null || !Files.isRegularFile(p) || d.estimates() == null) {
+            return ApiErrors.notFound("no file loaded");
+        }
+        JsonObject f = fileInfo();
+        String sha = f != null && f.has("sha256") && f.get("sha256").isJsonPrimitive() ? f.get("sha256").getAsString() : null;
+        EstimateCache.Controller c = d.eta() == null ? EstimateCache.Controller.NONE : d.eta().controller();
+        Optional<Estimate> e = d.estimates().get(p, sha, c, 30_000);
+        if (e.isEmpty()) {
+            return ApiErrors.error(503, "estimate_unavailable", "the time estimate could not be computed (yet); try again");
+        }
+        JsonObject o = e.get().toJson();
+        if ("0".equals(req.param("lines")) || "false".equals(req.param("lines"))) {
+            o.remove("line_end_s");
+        }
+        return ok(o);
     }
 
     // ------------------------------------------------------------------ act endpoints

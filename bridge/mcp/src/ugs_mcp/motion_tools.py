@@ -24,7 +24,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from ugs_mcp.bridge_client import TERMINAL_COMMAND_STATES, BridgeClient, BridgeError
-from ugs_mcp.describe import ALARMS, ERRORS, pins_words, report_age
+from ugs_mcp.describe import ALARMS, ERRORS, eta_lines, pins_words, report_age
 from ugs_mcp.gcode.analyze import analyze_path
 from ugs_mcp.safety import (
     Check,
@@ -585,14 +585,20 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
 
     @mcp.tool()
     async def job_state() -> str:
-        """The current or last job journal: file, stream state, last line acknowledged and
-        known done, operation, tool, WCO, BitSetter reference, modal state."""
+        """The current or last job: time left and finish time (from the bridge's planner
+        estimate, corrected by how fast the job is really going), current operation and
+        tool, next tool change; then the journal: file, stream state, last line acknowledged
+        and known done, WCO, BitSetter reference, modal state."""
         js = await _guard(bridge.job_state())
         if js is None:
             return "No job journal yet (nothing has been streamed in this bridge home)."
+        eta = eta_lines(js.get("eta"))
+        if "file" not in js:
+            return "\n".join(eta or ["No job journal yet."])
         f = js.get("file") or {}
         md = js.get("modal") or {}
         out = [
+            *eta,
             f"Job {f.get('path')} ({f.get('lines')} lines, sha256 {str(f.get('sha256'))[:12]}…)",
             f"Stream: {js.get('stream')}; last line acknowledged {js.get('line_acked')}, last"
             f" known done {js.get('line_done')} (updated {js.get('updated')}).",

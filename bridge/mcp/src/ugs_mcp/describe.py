@@ -278,3 +278,125 @@ def settings_text(
     if missing:
         head.append("Not in $$ output: " + ", ".join(missing))
     return "\n".join(head + rows)
+
+
+def duration(seconds: float) -> str:
+    """45 s, 3 min, 2 h 05 min (the notifier's wording)."""
+    s = round(seconds)
+    if s < 120:
+        return f"{s} s"
+    minutes = round(seconds / 60)
+    if minutes < 100:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60:02d} min"
+
+
+def _min(seconds: Any) -> float:
+    return round(float(seconds or 0) / 60, 1)
+
+
+def planner_time(est: dict[str, Any]) -> dict[str, Any]:
+    """The bridge's GRBL planner estimate (``GET /file/estimate``) for analyze_file's ``time``."""
+    return {
+        "machine_min": _min(est.get("machine_s")),
+        "tool_change_auto_min": _min(est.get("bitsetter_s")),
+        "total_min": _min(est.get("total_s")),
+        "operator_time": "not included (tool changes wait for the operator)",
+        "naive_min": _min(est.get("naive_s")),
+        "settings_from": est.get("settings_from"),
+        "tools": [
+            {"tool": t.get("tool"), "name": t.get("name"), "min": _min(t.get("s"))}
+            for t in est.get("tools") or []
+            if t.get("tool")
+        ],
+        "ops": [
+            {
+                "name": o.get("name"),
+                "tool": o.get("tool"),
+                "lines": [o.get("first_line"), o.get("last_line")],
+                "start_min": _min(o.get("start_s")),
+                "min": round((float(o.get("end_s") or 0) - float(o.get("start_s") or 0)) / 60, 1),
+            }
+            for o in est.get("ops") or []
+        ],
+        "tool_changes": [
+            {"line": c.get("line"), "to": c.get("to"), "at_min": _min(c.get("at_s"))}
+            for c in est.get("tool_changes") or []
+        ],
+        "assumptions": est.get("assumptions") or [],
+        "method": "GRBL planner simulation in the bridge (accelerations, cornering, look-ahead)",
+    }
+
+
+def planner_summary(est: dict[str, Any]) -> str:
+    """One line for analyze_file's summary."""
+    changes = len(est.get("tool_changes") or [])
+    text = (
+        "Planner estimate (bridge, GRBL accelerations, settings from the"
+        f" {est.get('settings_from')}): {duration(float(est.get('machine_s') or 0))} of"
+        " machine time"
+    )
+    if changes:
+        text += (
+            f" + {changes} tool change{'s' if changes != 1 else ''}"
+            f" (≈ {duration(float(est.get('bitsetter_s') or 0))} automatic, plus the"
+            " operator's time)"
+        )
+    tools = [t for t in est.get("tools") or [] if t.get("tool")]
+    if tools:
+        text += "; per tool: " + ", ".join(
+            f"{t['tool']} {duration(float(t.get('s') or 0))}" for t in tools
+        )
+    return text + "."
+
+
+def clock(iso: str | None) -> str | None:
+    """'18:42' from an ISO date-time."""
+    if not iso:
+        return None
+    m = re.search(r"T(\d\d:\d\d)", iso)
+    return m.group(1) if m else None
+
+
+def eta_lines(eta: dict[str, Any] | None) -> list[str]:
+    """``/job/state``'s ``eta`` in plain words."""
+    if not eta:
+        return []
+    elapsed = duration(float(eta.get("elapsed_s") or 0))
+    if not eta.get("active"):
+        last = f"Last job {eta.get('file') or ''}: {eta.get('result') or 'ended'} after {elapsed}"
+        if eta.get("estimate_machine_s"):
+            last += (
+                f" (machine time {duration(float(eta.get('machine_elapsed_s') or 0))},"
+                f" estimated {duration(float(eta['estimate_machine_s']))})"
+            )
+        return [last + "."]
+    if eta.get("adjusted_remaining_s") is None:
+        return [f"Running {elapsed}; no time estimate yet."]
+    what = " ".join(str(x) for x in (eta.get("current_tool"), eta.get("current_op")) if x)
+    head = f"{what}: " if what else ""
+    if eta.get("op_remaining_s") is not None:
+        head += f"{duration(float(eta['op_remaining_s']))} left in this operation; "
+    line = f"{head}job ≈ {duration(float(eta['adjusted_remaining_s']))} left"
+    if c := clock(eta.get("predicted_finish")):
+        line += f", done ≈ {c}"
+    n = int(eta.get("tool_changes_remaining") or 0)
+    if n:
+        line += f" (+{n} tool change{'s' if n != 1 else ''} waiting on the operator)"
+    out = [line + "."]
+    frac = eta.get("fraction")
+    detail = f"{round(float(frac) * 100)} % of the machine time done; " if frac is not None else ""
+    detail += (
+        f"running {elapsed}, paused {duration(float(eta.get('paused_s') or 0))},"
+        f" speed vs estimate x{float(eta.get('ratio') or 1):.2f}."
+    )
+    out.append(detail)
+    if eta.get("waiting_for_tool_change"):
+        out.append("UGS is waiting for the operator to change the tool.")
+    nxt = eta.get("next_tool_change")
+    if nxt and nxt.get("in_s") is not None:
+        out.append(
+            f"Next tool change: {nxt.get('tool')} at line {nxt.get('line')}"
+            f" in ≈ {duration(float(nxt['in_s']))}."
+        )
+    return out

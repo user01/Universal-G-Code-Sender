@@ -265,6 +265,62 @@ public class BridgeApiHttpTest {
         assertTrue(content.headers().firstValue("content-type").orElse("").startsWith("text/plain"));
     }
 
+    static JsonObject obj(String json) {
+        return JsonParser.parseString(json).getAsJsonObject();
+    }
+
+    @Test
+    public void fileEstimateJobStateEtaAndEtaRecords() throws Exception {
+        assertError(f.get("/file/estimate"), 404, "not_found");
+        Path nc = tmp.newFile("est.nc").toPath();
+        Files.writeString(nc, "G21 G90\n(---- OP 01 | T2 | a | b ----)\nT2 M6\nG1 X100 F600\nG1 X0\nM2\n");
+        f.link.file = nc.toFile();
+        // read endpoint: works while Claude is locked
+        JsonObject e = ApiFixture.json(f.get("/file/estimate"));
+        assertEquals(1, e.get("version").getAsInt());
+        assertEquals("grbl-planner", e.get("source").getAsString());
+        assertEquals("profile", e.get("settings_from").getAsString());
+        assertEquals(6, e.getAsJsonArray("line_end_s").size());
+        assertEquals(1, e.getAsJsonArray("tool_changes").size());
+        assertEquals("a", e.getAsJsonArray("ops").get(0).getAsJsonObject().get("name").getAsString());
+        double machine = e.get("machine_s").getAsDouble();
+        assertTrue("two 100 mm cuts at 10 mm/s: " + machine, machine > 20 && machine < 20.2);
+        assertFalse(ApiFixture.json(f.get("/file/estimate?lines=0")).has("line_end_s"));
+        // the controller's $$ wins over the profile
+        for (String l : List.of("$110=5000.000", "$111=5000", "$112=500", "$120=100", "$121=100", "$122=50")) {
+            f.log.append(LogRecord.Kind.RX, LogRecord.Src.CONTROLLER, obj("{\"line\":\"" + l + "\"}"));
+        }
+        JsonObject live = ApiFixture.json(f.get("/file/estimate"));
+        assertEquals("controller", live.get("settings_from").getAsString());
+        assertTrue(live.get("machine_s").getAsDouble() > machine);
+
+        // a stream: /job/state gains eta, and eta event records are written
+        f.log.append(LogRecord.Kind.EVENT, LogRecord.Src.OPERATOR, obj("{\"type\":\"stream\",\"event\":\"started\"}"));
+        JsonObject start = new JsonObject();
+        start.addProperty("action", "stream_start");
+        start.addProperty("path", nc.toString());
+        f.log.append(LogRecord.Kind.FILE, LogRecord.Src.OPERATOR, start);
+        ApiFixture.await(() -> f.host.eta().estimate() != null, "estimate");
+        JsonObject eta = ApiFixture.json(f.get("/job/state")).getAsJsonObject("eta");
+        assertTrue(eta.get("active").getAsBoolean());
+        assertEquals("est.nc", eta.get("file").getAsString());
+        assertEquals("a", eta.get("current_op").getAsString());
+        assertEquals(1, eta.get("tool_changes_remaining").getAsInt());
+        f.host.etaEvents().tick();
+        f.millis.addAndGet(31_000);
+        f.host.etaEvents().tick();
+        f.log.append(LogRecord.Kind.EVENT, LogRecord.Src.UGS, obj("{\"type\":\"stream\",\"event\":\"complete\"}"));
+        f.host.etaEvents().tick();
+        List<String> reasons = new ArrayList<>();
+        for (LogRecord r : f.log.since(0, Set.of(LogRecord.Kind.EVENT), 10_000)) {
+            JsonObject d = obj(r.json()).getAsJsonObject("data");
+            if (d.has("type") && "eta".equals(d.get("type").getAsString())) {
+                reasons.add(d.get("reason").getAsString());
+            }
+        }
+        assertEquals(List.of("start", "tick", "done"), reasons);
+    }
+
     @Test
     public void viewerIsServedAtView() throws Exception {
         HttpResponse<String> r = f.http.send(java.net.http.HttpRequest.newBuilder(

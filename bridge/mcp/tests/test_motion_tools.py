@@ -458,6 +458,63 @@ def _resume_plan_validator() -> Draft202012Validator:
     )
 
 
+ETA = {
+    "active": True,
+    "result": None,
+    "file": "dr_ryan.nc",
+    "elapsed_s": 1800.0,
+    "paused_s": 120.0,
+    "machine_elapsed_s": 1680.0,
+    "line_acked": 14210,
+    "line_done": 14188,
+    "estimate_total_s": 4200.0,
+    "estimate_machine_s": 4140.0,
+    "done_estimate_s": 1600.0,
+    "fraction": 0.386,
+    "ratio": 1.05,
+    "machine_remaining_s": 2540.0,
+    "adjusted_remaining_s": 2700.0,
+    "predicted_finish": "2026-11-16T18:42:07-05:00",
+    "current_op": "contour",
+    "current_tool": "T21",
+    "op_remaining_s": 240.0,
+    "next_tool_change": {"line": 20000, "tool": "T7", "in_s": 600.0},
+    "tool_changes_remaining": 1,
+    "waiting_for_tool_change": False,
+}
+
+
+async def test_job_state_shows_the_eta(sim_fake: FakeBridge, home: Path) -> None:
+    async with _client(home) as client:
+        sim_fake.job_state = {**JOURNAL, "eta": ETA}
+        text, err = await _call(client, "job_state")
+        assert not err
+        lines = text.splitlines()
+        assert lines[0] == (
+            "T21 contour: 4 min left in this operation; job ≈ 45 min left, done ≈ 18:42"
+            " (+1 tool change waiting on the operator)."
+        )
+        assert lines[1] == (
+            "39 % of the machine time done; running 30 min, paused 2 min, speed vs estimate x1.05."
+        )
+        assert lines[2] == "Next tool change: T7 at line 20000 in ≈ 10 min."
+        assert "last line acknowledged 14210, last known done 14188" in text
+        sim_fake.job_state = {
+            "eta": {
+                **ETA,
+                "active": False,
+                "result": "completed",
+                "elapsed_s": 4500.0,
+                "machine_elapsed_s": 4300.0,
+            }
+        }
+        text, err = await _call(client, "job_state")
+        assert not err
+        assert text == (
+            "Last job dr_ryan.nc: completed after 75 min (machine time 72 min, estimated 69 min)."
+        )
+
+
 async def test_job_state_plan_and_start_resume(
     sim_fake: FakeBridge, home: Path, validate: Callable[[str, Any], None]
 ) -> None:

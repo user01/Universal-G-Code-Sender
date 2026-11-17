@@ -160,6 +160,8 @@ class FakeBridge:
         self.last_alarm: int | None = None
         self.origins: list[dict[str, Any]] = []
         self.job_state: dict[str, Any] | None = None
+        #: ``GET /file/estimate`` (the Java bridge computes it; tests set it), None = 404
+        self.file_estimate: dict[str, Any] | None = None
         self.plans: dict[str, dict[str, Any]] = {}
         self.dialogs: list[Dialog] = []
         self.stream: dict[str, Any] = {"state": "idle"}
@@ -829,6 +831,7 @@ class FakeBridge:
             Route(f"{API}/settings", self.h_settings),
             Route(f"{API}/file", self.h_file),
             Route(f"{API}/file/content", self.h_file_content),
+            Route(f"{API}/file/estimate", self.h_file_estimate),
             Route(f"{API}/profile", self.h_profile),
             Route(f"{API}/origins", self.h_origins),
             Route(f"{API}/origins/apply", self.h_origins_apply, methods=["POST"]),
@@ -979,6 +982,16 @@ class FakeBridge:
         if self.file_text is None:
             return _err(404, "not_found", "no file loaded")
         return PlainTextResponse(self.file_text)
+
+    async def h_file_estimate(self, request: Request) -> Response:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
+            return r
+        if self.file_info is None or self.file_estimate is None:
+            return _err(404, "not_found", "no file loaded")
+        est = dict(self.file_estimate)
+        if request.query_params.get("lines") in ("0", "false"):
+            est.pop("line_end_s", None)
+        return JSONResponse(est)
 
     async def h_profile(self, request: Request) -> Response:
         if (r := self._auth(request, viewer_ok=True)) is not None:
