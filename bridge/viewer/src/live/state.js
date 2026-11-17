@@ -52,6 +52,7 @@ export function createLiveState({ trailMax = 50000 } = {}) {
     stream: { state: 'idle', file: null, sha256: null, lineSent: null, lineAcked: null, linesTotal: null, lineExec: null },
     journal: null, // GET /job/state summary
     eta: null, // normalized live ETA (data/estimate.js normalizeEta), null when unknown
+    readiness: null, // D27 twin readiness {state, warnings, items:[{id, severity, message, fix}]} or null
     job: null, // last `job` record data
     file: null, // {path, sha256, lines} of the program loaded in UGS
     tool: { current: null },
@@ -308,6 +309,7 @@ export function applyRecord(s, rec) {
 
     case 'event':
       if (d.type === 'eta' || d.event === 'eta') { s.eta = normalizeEta(d.eta ?? d); changes.add('eta'); break; }
+      if (d.type === 'readiness') { s.readiness = Array.isArray(d.items) ? d : null; changes.add('readiness'); break; }
       switch (d.type) {
         case 'alarm': {
           const code = typeof d.code === 'number' ? d.code : s.lastAlarmCode;

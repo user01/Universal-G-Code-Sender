@@ -15,6 +15,7 @@ export class HttpError extends Error {
     super(`${path}: HTTP ${status}${body?.error ? ` ${body.error}` : ''}`);
     this.status = status;
     this.code = body?.error ?? null;
+    this.body = body ?? null;
     this.path = path;
   }
 }
@@ -71,6 +72,23 @@ export class LiveConnection {
       throw new HttpError(r.status, body, path);
     }
     return text ? r.text() : r.json();
+  }
+
+  /**
+   * Authenticated POST with the viewer token. The bridge accepts it only for the operator's own
+   * actions (today: POST /twin/confirm, D27); everything else answers 403.
+   */
+  async post(path, body = {}) {
+    const r = await this.fetch(`${this.base}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer v.${this.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+    let json = null;
+    try { json = await r.json(); } catch { /* not JSON */ }
+    if (!r.ok) throw new HttpError(r.status, json, path);
+    return json;
   }
 
   /** GET that maps 404 to null. */

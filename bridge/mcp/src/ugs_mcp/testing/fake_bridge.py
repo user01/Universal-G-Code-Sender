@@ -382,7 +382,14 @@ class FakeBridge:
                 "operator",
                 {k: self.file_info[k] for k in ("path", "sha256", "lines")} | {"action": "loaded"},
             )
+            self.twin_confirmed = False
+            self.emit_readiness()
             return dict(self.file_info)
+
+    def emit_readiness(self) -> None:
+        """An ``event`` record of type ``readiness`` with the current findings (the plugin logs
+        one whenever they change)."""
+        self.emit("event", "bridge", {"type": "readiness", **self.twin_readiness()})
 
     # Records -----------------------------------------------------------------------------
 
@@ -987,10 +994,14 @@ class FakeBridge:
         if self._is_viewer(request.headers.get("authorization", "")):
             if self.file_info is None:
                 return _err(409, "not_ready", "no file loaded")
-            self.twin_confirmed = True
-            self.emit(
-                "event", "operator", {"type": "twin", "action": "stock_confirmed", "by": "viewer"}
-            )
+            with self._lock:
+                self.twin_confirmed = True
+                self.emit(
+                    "event",
+                    "operator",
+                    {"type": "twin", "action": "stock_confirmed", "by": "viewer"},
+                )
+                self.emit_readiness()
             return JSONResponse({"confirmed": True, "readiness": self.twin_readiness()})
         if (r := self._auth(request)) is not None:
             return r

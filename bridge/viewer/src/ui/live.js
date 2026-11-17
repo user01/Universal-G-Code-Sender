@@ -11,6 +11,7 @@ import { normalizeProfile } from '../data/profile.js';
 import { lastSegAtOrBefore } from '../gcode/parser.js';
 import { toolId } from '../gcode/header.js';
 import { etaLine } from '../data/estimate.js';
+import { readinessView, readinessHtml } from '../twin/readiness.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -78,11 +79,14 @@ export class LiveController {
     const status = await this.conn.get('/status');
     this._merge(applyStatus(st, status));
     if (!this.loaded) {
-      const [profile, origins, jobState] = await Promise.all([
+      const [profile, origins, jobState, readiness] = await Promise.all([
         this.conn.get('/profile').catch(() => null),
         this.conn.getOptional('/origins').catch(() => null),
         this.conn.getOptional('/job/state').catch(() => null),
+        this.conn.getOptional('/twin/readiness').catch(() => null),
       ]);
+      this.state.readiness = readiness;
+      this._mark('readiness');
       if (profile) {
         try {
           this.app.profile = normalizeProfile(profile, 'GET /profile');
@@ -100,6 +104,8 @@ export class LiveController {
     const info = await this.conn.getOptional('/file').catch(() => null);
     if ((info?.sha256 ?? null) !== (this.programSha ?? null)) await this._loadProgram();
     this._merge(applyJobState(st, await this.conn.getOptional('/job/state').catch(() => null)));
+    st.readiness = await this.conn.getOptional('/twin/readiness').catch(() => st.readiness);
+    this._mark('readiness');
     return Math.max(st.seq, this.conn.lastSeq);
   }
 
@@ -193,7 +199,7 @@ export class LiveController {
     if (ch.has('stream') || ch.has('file') || ch.has('job')) this._stream();
     if (ch.has('eta') || ch.has('stream')) this._eta();
     if (ch.size) this._fillInfo();
-    if (ch.has('banners') || ch.has('link') || ch.has('connection') || ch.has('file') || ch.has('stream')) this._banners();
+    if (ch.has('banners') || ch.has('link') || ch.has('connection') || ch.has('file') || ch.has('stream') || ch.has('readiness')) this._banners();
     this.viewer.requestRender();
   }
 
@@ -301,10 +307,34 @@ export class LiveController {
     if (st.banners.hold) b('hold', st.banners.hold.text);
     if (st.banners.error) b('error', st.banners.error.text);
     if (st.link === 'online' && this.loaded && !this.app.program) b('nofile', 'No program loaded in UGS', 'the live tool is still shown');
+    out.push(readinessHtml(readinessView(st.readiness), esc, this._confirming));
+    if (this._confirmMsg) b('error', this._confirmMsg);
+    // keep the readiness list open across redraws once the operator opened it
+    const open = !!document.querySelector('#banners .twin details[open]');
     $('banners').innerHTML = out.join('');
+    if (open) document.querySelector('#banners .twin details')?.setAttribute('open', '');
+  }
+
+  /** D27: the operator confirms the stock sits where this view shows it (viewer token only). */
+  async _confirmStock() {
+    this._confirming = true;
+    this._confirmMsg = null;
+    this._mark('readiness');
+    try {
+      const r = await this.conn.post('/twin/confirm', {});
+      if (r?.readiness) this.state.readiness = r.readiness;
+    } catch (e) {
+      this._confirmMsg = `Stock not confirmed: ${e?.body?.message ?? e?.message ?? e}`;
+    } finally {
+      this._confirming = false;
+      this._mark('readiness');
+    }
   }
 
   _bindUi() {
+    $('banners').addEventListener('click', (e) => {
+      if (e.target?.closest?.('[data-action="confirm-stock"]')) this._confirmStock();
+    });
     $('live-follow').addEventListener('change', (e) => { this.follow = e.target.checked; this._mark('stream'); });
     $('live-dim').addEventListener('change', (e) => { this.viewer.toolpath.setDim(e.target.checked); this.viewer.requestRender(); });
     $('live-trail').addEventListener('change', (e) => { this.layer.setTrailVisible(e.target.checked); this.viewer.requestRender(); });

@@ -129,6 +129,14 @@ try {
   await waitLive(page, () => ['ready', 'empty', 'off'].includes(window.ugsViewer.app.sim.status.state), null, 60000);
   console.log('sim', await live(page, () => window.ugsViewer.app.sim.status.text));
 
+  // ---- D27 twin readiness: the new program's stock isn't confirmed; the operator confirms it here
+  await waitLive(page, () => /stock_not_confirmed/.test(document.querySelector('#banners .banner.twin')?.textContent ?? ''));
+  await page.evaluate(() => document.querySelector('#banners .banner.twin details').setAttribute('open', ''));
+  await shot(page, 'live-01b-twin-warning', 'Twin readiness banner: the stock of the new program is not confirmed (Confirm button)');
+  await page.click('#banners [data-action="confirm-stock"]');
+  await waitLive(page, () => !document.querySelector('#banners .banner.twin'));
+  assert.equal(await live(page, () => window.ugsViewer.live.state.readiness.state), 'managed');
+
   // ---- Claude probes Z with the BitZero: probe hit marker, origin record moves the work zero
   const wcoBefore = await live(page, () => window.ugsViewer.app.wco.slice());
   await send('probe');
