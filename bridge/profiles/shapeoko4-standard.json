@@ -35,7 +35,9 @@
     "retract": 2.0,
     "repeat_tolerance": 0.05,
     "pin": "P",
-    "verified": false
+    "verified": false,
+    "xy_verified": true,
+    "location": "front-right, operator confirmed 2026-11-16 (machine X -4.2, Y -448.2; Y min = front); ledger B6"
   },
   "bitzero": {
     "plate_thickness": 13.35,
