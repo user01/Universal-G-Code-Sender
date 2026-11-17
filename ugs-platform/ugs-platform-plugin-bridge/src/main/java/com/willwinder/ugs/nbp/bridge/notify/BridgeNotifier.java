@@ -81,13 +81,17 @@ public final class BridgeNotifier implements Notifier, AutoCloseable {
     private Object fileStamp = "unread"; // guarded by this
     private String loggedSummary;        // guarded by this
     private volatile boolean closed;
+    private volatile TelegramCommands commands;
 
     /** Creates and starts the notifier for the bridge home of {@code log}. */
     public static BridgeNotifier start(SessionLog log) {
         return start(log, null);
     }
 
-    /** Creates and starts the notifier, with live time estimates from {@code estimates} (null: progress by file lines). */
+    /**
+     * Creates and starts the notifier, with live time estimates from {@code estimates} (null: progress by file lines)
+     * and the Telegram command poller (D26; idle until notify.json enables Telegram).
+     */
     public static BridgeNotifier start(SessionLog log, com.willwinder.ugs.nbp.bridge.eta.EstimateCache estimates) {
         HttpClient client = Sinks.newClient();
         com.willwinder.ugs.nbp.bridge.eta.EtaTracker eta = estimates == null ? null
@@ -95,7 +99,14 @@ public final class BridgeNotifier implements Notifier, AutoCloseable {
         BridgeNotifier n = new BridgeNotifier(log, log.home().resolve(NotifyConfig.FILE_NAME), client,
                 Sinks.TELEGRAM_API, null, System::nanoTime, new TriggerEngine.JobModelTools(), eta);
         n.start();
+        n.commands = new TelegramCommands(n::config, new TelegramCommands.Http(client, Sinks.TELEGRAM_API), log);
+        n.commands.start();
         return n;
+    }
+
+    /** The Telegram command poller, or null (tests). */
+    public TelegramCommands commands() {
+        return commands;
     }
 
     /**
@@ -132,6 +143,9 @@ public final class BridgeNotifier implements Notifier, AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        if (commands != null) {
+            commands.close();
+        }
         if (log != null) {
             log.removeListener(listener);
         }

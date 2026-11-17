@@ -81,7 +81,7 @@ Status 2026-11-15. Companion to `SPEC.md` (v0.1). Decisions here override the SP
   | progress every N % | off |
 
 - Every notification is also written to the session log (`kind: "notify"`).
-- Later, not v1: two-way replies (for example, approving from Telegram). Approvals stay in the UGS GUI for now.
+- Two-way Telegram (D26): a fixed set of read commands plus pause. Approvals (tool changes, authority, file runs) stay in the UGS GUI.
 
 ## W0 status (2026-11-15): done
 - Contracts: `bridge/docs/api.md`, `bridge/docs/log-format.md`, `bridge/schema/*.schema.json` (validated), profile `bridge/profiles/shapeoko4-standard.json` (placeholders marked `verified: false`).
@@ -121,6 +121,9 @@ Python total: 119 passed, 1 skipped (opt-in Java check). ruff + mypy strict clea
 - D21 **Claude may switch the router off (`M5`, `S0`) but never on:** `M3`/`M4` and non-zero `S` are refused; the operator starts the router.
 - D22 **Skip the BitSetter measurement when the length is known:** an `M6` for the tool in the collet, measured in this connection with no reset/alarm/homing/reconnect/G54 Z change since, sends only the `T` word, logs `tool` `confirmed` with `measurement_skipped`, and doesn't notify. Any doubt runs the full change.
 - D23 **The MCP lock gates actions, not reads** (operator, 2026-11-16). Locked, Claude can still GET everything and keep `WS /events` open, so it can watch and advise; every POST (including hold/reset and notify) gets 423. Supersedes the "reads included" rule in SPEC §4.3.
+- D24 **Time estimates simulate GRBL's planner** (operator, 2026-11-16: "a much better estimate both before and live"). `bridge.job.estimate.TimeEstimator`: per-axis rates and accelerations, junction deviation, the controller's planner depth with a full buffer, arcs per `$12`, stops at syncs. Settings from the live `$$`, else the profile's new `motion` block. Tool changes are reported with the automatic BitSetter cycle; the operator's time is never guessed. `GET /file/estimate`; `analyze_file` shows it when UGS has the same file loaded (else the simple estimate, labeled). Header `EST RUNTIME` values are not trusted (step50: header 51 min, planner 85 min).
+- D25 **Live ETA** from acknowledged lines minus the planner's contents, against the estimate's per-line times; tool changes, holds and pauses don't count as machine time; a 5-minute actual/estimate ratio (0.5–3) corrects the rest. `GET /job/state.eta`, `event eta` records, MCP `job_state`, and notifications: start (estimate + finish time), every 25 % by default (`progress_every_percent`, now default 25; `progress_every_minutes` optional), tool-change prompts (time left after the change), finish (actual vs estimated machine time).
+- D26 **Two-way Telegram, fixed vocabulary** (operator: "incredibly simple, no LLM"): `status`, `eta`, `tools`, `log`, `pause`, `help` from the configured private chat only, by long-polling `getUpdates` (no open port). Messages waiting at start are skipped. `pause` = feed hold while a job runs, allowed while Claude is locked (it's the operator); start/resume/unlock/home/jog/spindle/`$`/G-code are refused ("Do that at the machine"). `telegram.commands_enabled`, `telegram.allow_pause` in notify.json and the settings panel.
 
 ### Upstream patch candidates (from A), approved (D17); landed in W2 A2 (see the table above)
 - P3 a listener hook in `BufferedCommunicator.sendByteImmediately`, so real-time bytes (hold, resume, reset, overrides) are logged as tx. Without it, operator real-time bytes are invisible in the log.
@@ -167,6 +170,11 @@ First session on the real Shapeoko (results in `docs/machine-ledger.md`: A1–A4
 - **BitRunner is on/off only (C7):** profile `spindle.s_off_verified` 10000 / `s_on_verified` 18000; `analyze_file` errors on S at or below the off value (or none), warns between (the operator's files use S16000: untested), and reports the router dial as the speed.
 - Profile: BitZero 13.35 mm (paper test), BitSetter X −4.2 Y −448.2, 14 planner blocks. Tests read the thickness from the profile.
 - Still open from the session: confirm 13.35 by a re-probe; S16000 on the BitRunner; time the spin-down; homing repeatability 5×; pocket test for D2; D3/D4.
+
+### ETA and Telegram (2026-11-16): `bridge-eta-telegram`
+- D24–D26 above. Validation: air-cut run 2 had 34.63 s of machine time between its two tool changes (stream 75.40 s minus interceptor windows 21.35 s and 19.42 s); planner 35.78 s (+3.3 %), naive 34.88 s. The BitSetter cycle estimate (18.2 s without the new 8 s spin-down wait) matches the logged 17.9 s / 16.7 s. On the operator's files the planner adds 0–11 % over distance/feed (look-ahead limits don't bind at these segment lengths).
+- The ETA uses Capture's `file_line − 1` (the off-by-one in the W3 queue); fix both together.
+- Open: compare a full real job's actual time with the estimate (the `done` notification and `eta` records give it); feed overrides are ignored.
 
 ### Follow-ups queued for W2 (kept for history)
 - V-1 viewer: tool-change block outside operations (D11); live source with `GET /file/content` + `?vt=` WebSocket auth.

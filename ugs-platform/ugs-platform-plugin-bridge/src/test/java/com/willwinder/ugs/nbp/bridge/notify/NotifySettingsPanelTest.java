@@ -71,6 +71,8 @@ public class NotifySettingsPanelTest {
         p.chatId.setText(NotifyConfigTest.CHAT);
         p.progress.setValue(20);
         p.alarm.setSelected(false);
+        assertTrue(p.telegramCommands.isSelected() && p.telegramPause.isSelected());
+        p.telegramPause.setSelected(false);
         p.save();
         assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
         NotifyConfig saved = NotifyConfig.load(file);
@@ -78,6 +80,8 @@ public class NotifySettingsPanelTest {
         assertEquals(NotifyConfig.SinkState.OFF, saved.slackState());
         assertEquals(20, saved.progressEveryPercent);
         assertFalse(saved.alarm);
+        assertTrue(saved.telegramCommands);
+        assertFalse(saved.telegramAllowPause);
         assertTrue(p.status.getText(), p.status.getText().startsWith("Saved. telegram: ready"));
         assertFalse(p.status.getText().contains(NotifyConfigTest.TOKEN));
     }

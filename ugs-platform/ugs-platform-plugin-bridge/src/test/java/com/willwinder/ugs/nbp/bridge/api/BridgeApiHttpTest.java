@@ -322,6 +322,25 @@ public class BridgeApiHttpTest {
     }
 
     @Test
+    public void telegramAnswersFromTheApiStateAndPausesWhileLocked() throws Exception {
+        TelegramAccess t = f.host.telegramAccess();
+        assertTrue(f.authority.isLocked());
+        String status = t.status();
+        assertTrue(status, status.startsWith("State: Idle\nWork: X0.00 Y0.00 Z0.00\nMachine: X-10.00 Y-20.00 Z-5.00"));
+        assertTrue(status, status.contains("Job: none running"));
+        assertTrue(status, status.endsWith("Claude: locked out"));
+        assertEquals("No job has run since UGS started.", t.eta());
+        assertFalse(t.jobRunning());
+        f.log.append(LogRecord.Kind.EVENT, LogRecord.Src.OPERATOR, obj("{\"type\":\"stream\",\"event\":\"started\"}"));
+        f.log.append(LogRecord.Kind.EVENT, LogRecord.Src.CONTROLLER, obj("{\"type\":\"alarm\",\"code\":1}"));
+        assertTrue(t.jobRunning());
+        assertEquals("0x21", t.pause()); // the operator's action: Claude's lock doesn't apply
+        assertEquals(List.of("hold"), f.link.realtime);
+        String log = t.log(5);
+        assertTrue(log, log.contains(" stream started") && log.contains(" ALARM 1"));
+    }
+
+    @Test
     public void viewerIsServedAtView() throws Exception {
         HttpResponse<String> r = f.http.send(java.net.http.HttpRequest.newBuilder(
                 URI.create("http://127.0.0.1:" + f.host.port() + "/view/")).build(), HttpResponse.BodyHandlers.ofString());

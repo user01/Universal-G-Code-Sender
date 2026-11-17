@@ -108,3 +108,36 @@ Breaking changes bump `/v1`. Additive fields are allowed at any time; clients mu
 - **`controller_silent` / `controller_responding` events:** the bridge checks every 2 s; after 10 s without a report while connected it logs `event {type: "controller_silent", age_s}` once (notified under the `connection_lost` trigger), and `controller_responding` when reports resume.
 - **Clients waiting for motion:** a line's `ok` means "queued in GRBL's planner", not "done", and `GET /status` right after it can still show the state from before the motion. The MCP tools end every motion call with `G4 P0` (GRBL answers it only when the planner is empty) and then wait for a status report younger than that `ok` (`now − age_s` later than the moment the result arrived). Jogs get no `G4 P0` (GRBL answers G-code during a jog with error:9); their completion is the first fresh Idle report.
 - **Motion is refused while the controller is silent** (`controller_report.age_s` ≥ 5): the position can't be trusted.
+
+## Time estimates, live ETA and Telegram commands (2026-11-16, PLAN D24–D26)
+
+- **`GET /file/estimate`** (Observe, works while Claude is locked; viewer allowed): the GRBL planner time estimate of the loaded file. `?lines=0` leaves out `line_end_s`. 404 without a loaded file, 503 `estimate_unavailable` if it couldn't be computed within 30 s.
+
+  ```
+  {version: 1, source: "grbl-planner", settings_from: "controller"|"profile", file, sha256, lines,
+   total_s, machine_s, bitsetter_s, operator_s: null, naive_s,
+   settings: {max_rate_mm_min[3], accel_mm_s2[3], junction_deviation_mm, arc_tolerance_mm, planner_blocks},
+   line_end_s: [cumulative machine seconds at the end of each file line; index 0 = line 1],
+   ops: [{index, name, tool, first_line, last_line, start_s, end_s}],
+   tools: [{tool, number, name, s}],               // machine seconds per tool, in order of use
+   tool_changes: [{line, from, to, at_s, bitsetter_s, operator_s: null}],
+   assumptions: [text]}
+  ```
+
+  `machine_s` is motion and dwells only. `bitsetter_s` is the automatic part of every tool change (park, spin-down wait, BitSetter fast/slow probe, return) estimated with the same planner; the operator's time is unknown and never included. `total_s = machine_s + bitsetter_s`. `naive_s` (distance / feed, no acceleration) is there for comparison. The simulation: per-axis max rate and acceleration (`$110-$112`, `$120-$122`), junction deviation (`$11`) cornering, GRBL's reverse/forward planner passes with the controller's planner depth (14 blocks on the Shapeoko; the sender is assumed to keep the buffer full), arcs split per `$12`, rapids at the per-axis max rate (not `rapid_mm_min`, which is only Claude's feed cap), and a full stop at `G4`, spindle/coolant changes, `M6`, probes and program stops. Settings come from the controller's `$$` once the bridge has seen it, else from the profile's `motion` block. Results are cached per file SHA-256, settings and work offset (to 1 mm; only `G53` moves depend on it).
+
+- **`GET /job/state`** gains `eta` (null when no stream has run since UGS started). The journal fields are unchanged; when no journal exists but a stream has run, the answer is `{eta}` only.
+
+  ```
+  eta: {active, result: null|"completed"|"canceled"|"disconnected", file,
+        elapsed_s, paused_s, machine_elapsed_s, line_acked, line_done,
+        estimate_total_s, estimate_machine_s, done_estimate_s, fraction, ratio,
+        machine_remaining_s, adjusted_remaining_s, predicted_finish (ISO local),
+        current_op, current_tool, op_remaining_s,
+        next_tool_change: {line, tool, in_s} | null, tool_changes_remaining, waiting_for_tool_change}
+  ```
+
+  Progress is the highest acknowledged file line minus what is still in the controller's planner (up to its block count of timed lines; none once it reports Idle), turned into machine seconds with `line_end_s`. `paused_s` covers tool changes (interceptor active), feed holds (`Hold`/`Door`) and paused streams; `machine_elapsed_s = elapsed_s − paused_s`. `ratio` is actual / estimated machine time over the last 5 minutes (the whole run until 20 s of estimate are covered), clamped to 0.5–3. `adjusted_remaining_s = machine_remaining_s × ratio + bitsetter_s of the tool changes still ahead`; a change in progress is not "ahead". The operator's tool-change time is not in `predicted_finish`.
+
+- **`event {type: "eta", reason, …eta fields}`** records: `start` (when the estimate is first known for a stream), `tick` (every 30 s while running), `op`, `tool`, `tool_change` (wait started or ended), `done`.
+- **Telegram commands** are not an API endpoint: the notifier long-polls the Bot API (outbound only) and answers the configured private chat. They are logged as `client` records with `client: "telegram"` and `action: command|pause|ignored_sender|skipped_backlog|poll_error|reply_failed` (never the token). `pause` sends a feed hold as the operator (not subject to Claude's lock).

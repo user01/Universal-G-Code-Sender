@@ -248,6 +248,11 @@ public final class ApiHost implements AutoCloseable {
         return api;
     }
 
+    /** The machine side of the Telegram commands (D26). */
+    public TelegramAccess telegramAccess() {
+        return new TelegramAccess(state, eta, authority, link, log);
+    }
+
     /** Live progress and finish time of the streaming job. */
     public EtaTracker eta() {
         return eta;

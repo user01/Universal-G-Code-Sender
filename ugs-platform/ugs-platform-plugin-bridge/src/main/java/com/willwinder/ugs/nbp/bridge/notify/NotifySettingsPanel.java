@@ -54,6 +54,8 @@ public final class NotifySettingsPanel extends JPanel {
     final JPasswordField botToken = new JPasswordField(28);
     final JTextField chatId = new JTextField(14);
     final JCheckBox showTelegram = new JCheckBox("show");
+    final JCheckBox telegramCommands = new JCheckBox("Answer status/eta/tools/log from this chat");
+    final JCheckBox telegramPause = new JCheckBox("Allow pause (feed hold)");
     final JCheckBox slackEnabled = new JCheckBox("Slack");
     final JPasswordField webhookUrl = new JPasswordField(28);
     final JCheckBox showSlack = new JCheckBox("show");
@@ -113,6 +115,7 @@ public final class NotifySettingsPanel extends JPanel {
         y = row(sinks, y, telegramEnabled, null, null);
         y = row(sinks, y, new JLabel("Bot token"), botToken, showTelegram);
         y = row(sinks, y, new JLabel("Chat id"), chatId, null);
+        y = row(sinks, y, telegramCommands, telegramPause, null);
         y = row(sinks, y, slackEnabled, null, null);
         row(sinks, y, new JLabel("Webhook URL"), webhookUrl, showSlack);
 
@@ -176,6 +179,8 @@ public final class NotifySettingsPanel extends JPanel {
         telegramEnabled.setSelected(cfg.telegramEnabled);
         botToken.setText(cfg.botToken);
         chatId.setText(cfg.chatId);
+        telegramCommands.setSelected(cfg.telegramCommands);
+        telegramPause.setSelected(cfg.telegramAllowPause);
         slackEnabled.setSelected(cfg.slackEnabled);
         webhookUrl.setText(cfg.webhookUrl);
         streamFinished.setSelected(cfg.streamFinished);
@@ -197,6 +202,8 @@ public final class NotifySettingsPanel extends JPanel {
         b.telegramEnabled = telegramEnabled.isSelected();
         b.botToken = new String(botToken.getPassword()).trim();
         b.chatId = chatId.getText().trim();
+        b.telegramCommands = telegramCommands.isSelected();
+        b.telegramAllowPause = telegramPause.isSelected();
         b.slackEnabled = slackEnabled.isSelected();
         b.webhookUrl = new String(webhookUrl.getPassword()).trim();
         b.streamFinished = streamFinished.isSelected();

@@ -423,7 +423,8 @@
             "setting",
             "interceptor",
             "controller_silent",
-            "controller_responding"
+            "controller_responding",
+            "eta"
           ]
         }
       },
@@ -578,7 +579,8 @@
           "type": "string",
           "enum": [
             "mcp",
-            "viewer"
+            "viewer",
+            "telegram"
           ]
         },
         "action": {
@@ -587,7 +589,13 @@
             "connect",
             "disconnect",
             "auth_failed",
-            "locked_refused"
+            "locked_refused",
+            "command",
+            "pause",
+            "ignored_sender",
+            "skipped_backlog",
+            "poll_error",
+            "reply_failed"
           ]
         },
         "remote": {

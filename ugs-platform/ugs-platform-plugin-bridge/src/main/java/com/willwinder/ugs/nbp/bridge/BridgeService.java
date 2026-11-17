@@ -181,6 +181,9 @@ public final class BridgeService implements Runnable {
             ApiHost host = new ApiHost(log.home(), log, authority, link, new SwingOperatorPrompts(),
                     () -> notifier != null ? notifier : com.willwinder.ugs.nbp.bridge.api.BridgeApi.NO_NOTIFIER, estimates);
             host.start();
+            if (notifier != null && notifier.commands() != null) {
+                notifier.commands().setMachine(host.telegramAccess());
+            }
             machineLink = link;
             apiHost = host;
             PendantWatch pw = new PendantWatch(backend, host.port());
@@ -195,6 +198,9 @@ public final class BridgeService implements Runnable {
         if (pendantWatch != null) {
             pendantWatch.stop();
             pendantWatch = null;
+        }
+        if (notifier != null && notifier.commands() != null) {
+            notifier.commands().setMachine(null);
         }
         if (apiHost != null) {
             apiHost.close();

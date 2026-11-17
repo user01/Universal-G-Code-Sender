@@ -91,3 +91,9 @@ How the notifier (`bridge.notify`) fills `notify` records. Extras are additive.
 - notify.json may carry an optional `dedup_seconds` (default 120, 0 = off): identical texts within that window are suppressed. `alert` level (ALARM, stream error, connection lost, failed tool change) ignores `rate_limit_per_minute` but is still de-duplicated.
 
 Validate a log with `cd bridge && uv run python scripts/validate_log.py <session.jsonl>`.
+
+## ETA and Telegram records (PLAN D25, D26)
+
+- `event {type: "eta", reason: start|tick|op|tool|tool_change|done, …}` carries the `eta` object of `GET /job/state` (bridge/docs/api.md). Written by the API every 30 s while a stream runs and at operation, tool and tool-change boundaries.
+- `client {client: "telegram", action: command|pause|ignored_sender|skipped_backlog|poll_error|reply_failed, remote?, detail?}`: the Telegram command poller. `remote` is the numeric chat id of an ignored sender (logged once per sender); `detail` is the command word, the pause result or a scrubbed error. The bot token never appears.
+- notify.json additions: `triggers.progress_every_percent` now defaults to 25 (of the estimated machine time when the estimate is known, else of the file lines), `triggers.progress_every_minutes` (default 0 = off), `telegram.commands_enabled` and `telegram.allow_pause` (default true). Progress messages (`trigger: progress`) include a start message with the estimate and finish time; tool-change and job-finished messages gain the time left and the actual vs estimated machine time.
