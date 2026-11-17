@@ -141,3 +141,36 @@ Breaking changes bump `/v1`. Additive fields are allowed at any time; clients mu
 
 - **`event {type: "eta", reason, …eta fields}`** records: `start` (when the estimate is first known for a stream), `tick` (every 30 s while running), `op`, `tool`, `tool_change` (wait started or ended), `done`.
 - **Telegram commands** are not an API endpoint: the notifier long-polls the Bot API (outbound only) and answers the configured private chat. They are logged as `client` records with `client: "telegram"` and `action: command|pause|ignored_sender|skipped_backlog|poll_error|reply_failed` (never the token). `pause` sends a feed hold as the operator (not subject to Claude's lock).
+
+## Twin readiness (2026-11-16, PLAN D27)
+
+Says when what the twin (3D view) shows is assumed, missing, or has drifted from the machine without the bridge knowing. Warnings never block anything.
+
+- **`GET /twin/readiness`** (Observe, works while Claude is locked; viewer allowed):
+
+  ```
+  {state: "managed"|"warnings", warnings, infos,
+   items: [{id, severity: "warn"|"info", message, fix}]}
+  ```
+
+  | id | severity | when |
+  |---|---|---|
+  | `machine_config_assumed` | warn | profile values not measured yet (`verified: false`, `*_verified: false`, `*source` starting "assumed", null `spoilboard_z_machine`, null BitZero bore); the message names them and the fix the ledger rows |
+  | `machine_config_missing` | warn | the profile can't be read |
+  | `controller_settings_differ` | warn | the last `$$` differs from `expected_settings` or the `motion` block |
+  | `controller_travel_differs` | info | only `$130-$132` differ and soft limits are off (`$20=0`) |
+  | `controller_settings_unread` | info | connected, no `$$` read this session |
+  | `not_connected` | info | no controller |
+  | `not_homed` | warn | connected, not homed since connecting or an alarm |
+  | `g54_changed_outside` | warn | the newest origin is `observed` (G54 changed by another program, or differs from the store on connect) and the operator hasn't confirmed since |
+  | `bitsetter_reference_stale` | warn | G54 Z changed after the reference was taken, not by a BitSetter tool change or by restoring an origin with the same reference |
+  | `bitsetter_reference_missing` | warn | the loaded file changes tools, BitSetter tool changes are on, no reference |
+  | `no_stock` | warn | the loaded file has no `(STOCK: …)` header and no sidecar `stock` |
+  | `stock_not_confirmed` | warn | the operator hasn't confirmed this file's stock at the current G54 (X/Y moved since, or Z changed other than by a BitSetter tool change) |
+  | `placement_unchecked` | info | a stock is known but G54 isn't (not connected) |
+  | `stock_on_bitsetter`, `stock_off_spoilboard`, `cut_outside_stock`, `outside_envelope` | warn | the placement checks, at the live G54 (same rules as the viewer's `twin/placement.js`; shared cases in `bridge/testdata-public/twin-placement-cases.json`) |
+
+- **`GET /status`** gains `readiness: {state, warnings, infos, ids: [warning ids]}`.
+- **`POST /twin/confirm`** (body `{}`), **operator only**: accepted with the viewer token (the 3D view's Confirm stock button; the bridge panel calls the same code in-process). Claude's token gets 403 `operator_only` (423 while locked). Records `{sha256, file, wco, at, by}` in `<bridge home>/twin.json` and an `event {type: "twin", action: "stock_confirmed"}` record (src `operator`). 409 `not_ready` without a loaded file or a known G54. Answers `{confirmed, sha256, wco, at, readiness}`.
+- **`POST /file/run`**: the 202 answer carries `readiness`, and the operator's dialog lists the warnings.
+- **`event {type: "readiness", state, warnings, infos, items, first}`** records whenever the findings change (checked every 2 s after relevant records). **`event {type: "twin", action: "start_anyway"|"start_cancelled", warnings}`**: the operator's answer to the warnings shown when they press Send in UGS.

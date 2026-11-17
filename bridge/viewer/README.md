@@ -69,6 +69,7 @@ from `bridge/mcp` with a simulated GRBL: see "Tests".
 | Time from the bridge's planner estimate (`GET /file/estimate`), else rough distance ÷ feed (labelled); per-op duration and end time, per-tool totals, tool-change times | done |
 | Live ETA (`eta` in `/job/state` and `eta` records): "Now: T21 contour · 4 min left in op · job ≈ 18:42 · next tool change in 12 min", clock end per op | done (live mode) |
 | Phone width (390 px): panel under the view, wrapped timeline, ETA pill over the view | done |
+| Twin readiness banner (`/twin/readiness`, `readiness` records, D27): each warning with its fix; *Confirm stock is where shown* (`POST /twin/confirm`, the only POST the viewer token may make) | done (live mode) |
 | Work-zero (G54) axes. The offset is an editable input, labeled *assumed* | done |
 | Stock box from the sidecar or the `(STOCK: …)` header | done |
 | Toolpath colored by operation; rapids dashed; plunges in yellow | done |

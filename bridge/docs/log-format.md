@@ -97,3 +97,9 @@ Validate a log with `cd bridge && uv run python scripts/validate_log.py <session
 - `event {type: "eta", reason: start|tick|op|tool|tool_change|done, …}` carries the `eta` object of `GET /job/state` (bridge/docs/api.md). Written by the API every 30 s while a stream runs and at operation, tool and tool-change boundaries.
 - `client {client: "telegram", action: command|pause|ignored_sender|skipped_backlog|poll_error|reply_failed, remote?, detail?}`: the Telegram command poller. `remote` is the numeric chat id of an ignored sender (logged once per sender); `detail` is the command word, the pause result or a scrubbed error. The bot token never appears.
 - notify.json additions: `triggers.progress_every_percent` now defaults to 25 (of the estimated machine time when the estimate is known, else of the file lines), `triggers.progress_every_minutes` (default 0 = off), `telegram.commands_enabled` and `telegram.allow_pause` (default true). Progress messages (`trigger: progress`) include a start message with the estimate and finish time; tool-change and job-finished messages gain the time left and the actual vs estimated machine time.
+
+## Twin readiness records (PLAN D27)
+
+- `event {type: "readiness", state: managed|warnings, warnings, infos, items: [{id, severity, message, fix}], first}` (src `bridge`): the findings of `GET /twin/readiness` (bridge/docs/api.md), written when they change (checked every 2 s after a status, origin, file, session, rx, event or tool record). `first` marks the first one after the API started.
+- `event {type: "twin", action: "stock_confirmed", sha256, file, wco, by: gui|viewer}` (src `operator`): the operator confirmed that the loaded file's stock sits where the twin shows it, at that G54. Also kept in `<bridge home>/twin.json`.
+- `event {type: "twin", action: "start_anyway"|"start_cancelled", warnings: [ids]}` (src `operator`): the answer to the warnings shown when the operator pressed Send in UGS.
