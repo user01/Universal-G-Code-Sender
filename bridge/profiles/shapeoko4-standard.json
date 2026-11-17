@@ -78,5 +78,48 @@
   "rx_buffer_bytes": 128,
   "_planner_note": "from the controller's $I [OPT:VNPR,14,128] (ledger A4); the bridge uses the live $I value once it has seen one. BitSetter xy measured 2026-11-16 (ledger B6)",
   "spoilboard_z_machine": null,
+  "bed": {
+    "verified": false,
+    "source": "assumed from published Shapeoko 4 Standard dimensions (working area about 445 x 456 mm, Y rails outside the X travel, front and back extrusions, hybrid spoilboard) laid out around the profile envelope and the measured BitSetter; nothing here is measured. Measure: ledger B11 (spoilboard corners), B12 (frame/rails), B9 (spoilboard Z)",
+    "spoilboard": {
+      "min_xy": [
+        -460.0,
+        -432.0
+      ],
+      "max_xy": [
+        15.0,
+        15.0
+      ],
+      "thickness": 19.0
+    },
+    "frame": {
+      "y_rails": {
+        "x": [
+          -500.0,
+          55.0
+        ],
+        "y": [
+          -505.0,
+          45.0
+        ],
+        "width": 40.0,
+        "height": 70.0
+      },
+      "x_extrusions": {
+        "y": [
+          -490.0,
+          30.0
+        ],
+        "x": [
+          -520.0,
+          75.0
+        ],
+        "depth": 30.0,
+        "height": 40.0
+      }
+    },
+    "bitsetter_radius": 20.0,
+    "front": "-Y"
+  },
   "_ledger": "bridge/docs/machine-ledger.md"
 }
