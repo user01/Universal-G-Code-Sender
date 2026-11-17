@@ -47,19 +47,41 @@ public final class TelegramAccess implements TelegramCommands.Machine {
     private final Authority authority;
     private final MachineLink link;
     private final SessionLog log;
+    private final java.util.function.Supplier<com.willwinder.ugs.nbp.bridge.twin.Readiness.Report> readiness;
 
     public TelegramAccess(StateTracker state, EtaTracker eta, Authority authority, MachineLink link, SessionLog log) {
+        this(state, eta, authority, link, log, null);
+    }
+
+    /** @param readiness the twin readiness (D27) for the status reply, or null */
+    public TelegramAccess(StateTracker state, EtaTracker eta, Authority authority, MachineLink link, SessionLog log,
+                          java.util.function.Supplier<com.willwinder.ugs.nbp.bridge.twin.Readiness.Report> readiness) {
         this.state = state;
         this.eta = eta;
         this.authority = authority;
         this.link = link;
         this.log = log;
+        this.readiness = readiness;
+    }
+
+    /** "Twin: managed" or "Twin: 2 warnings (not_homed, stock_not_confirmed)"; null when unavailable. */
+    String twinLine() {
+        if (readiness == null) {
+            return null;
+        }
+        try {
+            com.willwinder.ugs.nbp.bridge.twin.Readiness.Report r = readiness.get();
+            return r == null ? null : "Twin: " + r.summary();
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     @Override
     public String status() {
         if (!state.connected()) {
-            return "UGS is not connected to the controller.";
+            String twin = twinLine();
+            return "UGS is not connected to the controller." + (twin == null ? "" : "\n" + twin);
         }
         JsonObject c = state.controller();
         StringBuilder s = new StringBuilder();
@@ -107,6 +129,10 @@ public final class TelegramAccess implements TelegramCommands.Machine {
         }
         Authority.Snapshot a = authority.snapshot();
         s.append("\nClaude: ").append(a.locked() ? "locked out" : "allowed, " + a.level().id());
+        String twin = twinLine();
+        if (twin != null) {
+            s.append('\n').append(twin);
+        }
         return s.toString();
     }
 

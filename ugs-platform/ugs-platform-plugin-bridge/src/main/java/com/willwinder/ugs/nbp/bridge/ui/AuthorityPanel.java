@@ -71,6 +71,7 @@ public final class AuthorityPanel extends JPanel {
     private final JLabel apiLabel = new JLabel();
     private final JButton openView = new JButton("Open 3D view");
     private final JLabel pendantLabel = new JLabel();
+    private final TwinRow twinRow = new TwinRow();
     private final Timer timer = new Timer(1000, e -> refresh());
     private final Authority.Listener authorityListener = (c, s) -> SwingUtilities.invokeLater(this::refresh);
     private final java.util.function.Consumer<PendantWatch.State> pendantListener = s -> SwingUtilities.invokeLater(this::refresh);
@@ -113,6 +114,7 @@ public final class AuthorityPanel extends JPanel {
         apiRow.add(openView);
         openView.addActionListener(e -> openViewer());
         add(left(apiRow));
+        add(left(twinRow));
         pendantLabel.setForeground(new Color(0xC0392B));
         add(left(pendantLabel));
         add(Box.createVerticalGlue());
@@ -233,6 +235,7 @@ public final class AuthorityPanel extends JPanel {
             apiLabel.setText("API not running");
             openView.setEnabled(false);
         }
+        twinRow.refresh();
         String warn = pw == null ? null : pw.state().warning();
         pendantLabel.setText(warn == null ? "" : "<html><b>Warning:</b> " + escape(warn) + "</html>");
         pendantLabel.setVisible(warn != null);

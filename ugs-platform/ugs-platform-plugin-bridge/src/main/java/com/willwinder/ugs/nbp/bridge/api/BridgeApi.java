@@ -60,6 +60,7 @@ import java.util.Optional;
 import java.util.Set;
 import com.google.gson.JsonParser;
 import com.willwinder.ugs.nbp.bridge.eta.EstimateCache;
+import com.willwinder.ugs.nbp.bridge.twin.ReadinessService;
 import com.willwinder.ugs.nbp.bridge.eta.EtaTracker;
 import com.willwinder.ugs.nbp.bridge.job.estimate.Estimate;
 import java.util.concurrent.ConcurrentHashMap;
@@ -96,7 +97,7 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
     public record Deps(SessionLog log, Authority authority, StateTracker state, CommandService commands,
                        MachineLink link, OperatorPrompts prompts, ProfileSource profile, Path home,
                        Supplier<Notifier> notifier, Supplier<Optional<Path>> journal, EtaTracker eta,
-                       EstimateCache estimates) {
+                       EstimateCache estimates, ReadinessService readiness) {
     }
 
     private final Deps d;
@@ -191,6 +192,14 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
                 return get(route, req);
             }
             if (req.method().equals("POST")) {
+                if (route.equals("/twin/confirm")) {
+                    // D27: only the operator confirms where the stock is (the viewer they look at, or the GUI)
+                    if (client != Client.VIEWER) {
+                        return ApiErrors.error(403, "operator_only",
+                                "only the operator confirms the stock placement (bridge panel or 3D view)");
+                    }
+                    return twinConfirm();
+                }
                 if (client == Client.VIEWER) {
                     return ApiErrors.error(403, "authority_required", "the viewer token is read-only");
                 }
@@ -228,6 +237,8 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
             }
             case "/origins" -> origins();
             case "/job/state" -> jobState();
+            case "/twin/readiness" -> d.readiness() == null ? ApiErrors.notFound("readiness not available")
+                    : ok(d.readiness().report().toJson());
             case "/events" -> ApiErrors.error(400, "invalid_request", "WS /events needs a WebSocket upgrade");
             default -> ApiErrors.notFound("no such endpoint: GET " + route);
         };
@@ -384,6 +395,13 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
         s.add("stream", tmp.get("stream"));
         s.add("interceptor", tmp.get("interceptor"));
         s.add("tool", tmp.get("tool"));
+        if (d.readiness() != null) {
+            try {
+                s.add("readiness", d.readiness().report().summaryJson());
+            } catch (RuntimeException e) {
+                s.add("readiness", com.google.gson.JsonNull.INSTANCE);
+            }
+        }
         return s;
     }
 
@@ -722,7 +740,7 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
         logAuthority("Claude asks to run " + p.getFileName() + " (sha256 " + fp.sha256() + ")", LogRecord.Src.CLAUDE,
                 Map.of("requested", "stream", "action", "file_run", "run_id", id, "path", p.toString(), "sha256", fp.sha256()));
         String msg = "Claude asks to run the loaded file:\n\n  " + p.getFileName() + "\n  " + fp.lines() + " lines\n  SHA-256 "
-                + fp.sha256() + "\n\nStart streaming it now?";
+                + fp.sha256() + "\n\n" + readinessText() + "Start streaming it now?";
         OperatorPrompts.Prompt prompt = d.prompts().confirm("Claude: run file", msg, "Start");
         runPrompt = prompt;
         prompt.result().whenComplete((approved, err) -> {
@@ -759,7 +777,51 @@ public final class BridgeApi implements LiteHttpServer.Handler, LiteHttpServer.U
         o.addProperty("state", "awaiting_operator");
         o.addProperty("id", id);
         o.addProperty("sha256", fp.sha256());
+        if (d.readiness() != null) {
+            o.add("readiness", d.readiness().report().toJson());
+        }
         return HttpResponse.json(202, o.toString());
+    }
+
+    /** The readiness warnings as prompt text ("" when the twin is managed). */
+    private String readinessText() {
+        if (d.readiness() == null) {
+            return "";
+        }
+        try {
+            var r = d.readiness().report();
+            if (r.managed()) {
+                return "";
+            }
+            StringBuilder b = new StringBuilder("Twin warnings (they don't block the run):\n");
+            r.warnings().forEach(w -> b.append("  - ").append(w.message()).append('\n'));
+            return b.append('\n').toString();
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** {@code POST /twin/confirm} (viewer token only): the operator confirms the loaded file's stock placement. */
+    private HttpResponse twinConfirm() {
+        if (d.readiness() == null) {
+            return ApiErrors.notFound("readiness not available");
+        }
+        try {
+            var c = d.readiness().confirm("viewer");
+            JsonObject o = new JsonObject();
+            o.addProperty("confirmed", true);
+            o.addProperty("sha256", c.sha256);
+            com.google.gson.JsonArray w = new com.google.gson.JsonArray();
+            for (double v : c.wco) {
+                w.add(v);
+            }
+            o.add("wco", w);
+            o.addProperty("at", c.at);
+            o.add("readiness", d.readiness().report().toJson());
+            return ok(o);
+        } catch (IllegalStateException e) {
+            return ApiErrors.conflict("not_ready", e.getMessage());
+        }
     }
 
     private void logAuthority(String reason, String by, Map<String, String> extra) {

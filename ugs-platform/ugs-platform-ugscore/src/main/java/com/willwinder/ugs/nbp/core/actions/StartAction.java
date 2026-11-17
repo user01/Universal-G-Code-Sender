@@ -89,6 +89,12 @@ public final class StartAction extends ProgramAction implements UGSEventListener
             if (backend.isPaused()) {
                 backend.pauseResume();
             } else {
+                java.awt.Component parent = e != null && e.getSource() instanceof java.awt.Component c ? c : null;
+                for (StartGuard guard : org.openide.util.Lookup.getDefault().lookupAll(StartGuard.class)) {
+                    if (!guard.beforeStart(parent)) {
+                        return;
+                    }
+                }
                 backend.send();
             }
         } catch (Exception ex) {

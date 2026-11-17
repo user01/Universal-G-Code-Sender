@@ -38,6 +38,14 @@ public class JobSidecar {
     public Double spoilboardLimitZ;
     public List<Tool> tools;
     public List<Op> operations;
+    /** Stock box: {@code size} [x, y, z] in {@link #units}, {@code origin} like "front-left-top". */
+    public Stock stock;
+
+    public static class Stock {
+        public double[] size;
+        public String origin;
+        public String material;
+    }
 
     public static class Tool {
         public String id;

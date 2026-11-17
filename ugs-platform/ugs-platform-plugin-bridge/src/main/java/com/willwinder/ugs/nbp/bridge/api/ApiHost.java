@@ -66,6 +66,7 @@ public final class ApiHost implements AutoCloseable {
     private final EtaTracker eta;
     private final EtaEvents etaEvents;
     private final java.util.function.Consumer<com.willwinder.ugs.nbp.bridge.log.LogRecord> etaListener;
+    private final com.willwinder.ugs.nbp.bridge.twin.ReadinessService readiness;
     private volatile int port = -1;
 
     /**
@@ -105,13 +106,16 @@ public final class ApiHost implements AutoCloseable {
         this.etaEvents = new EtaEvents(eta, log);
         this.etaListener = eta::accept;
         this.commands = new CommandService(log, link, authority, prompts, this::queryStatus);
+        this.readiness = new com.willwinder.ugs.nbp.bridge.twin.ReadinessService(home, log, profile::json,
+                new LiveFacts(), java.time.Clock.systemUTC());
         this.api = new BridgeApi(new BridgeApi.Deps(log, authority, state, commands, link, prompts, profile,
-                home, notifier, () -> latestJournal(log.logsRoot()), eta, this.estimates), mcpToken, viewerToken);
+                home, notifier, () -> latestJournal(log.logsRoot()), eta, this.estimates, readiness), mcpToken, viewerToken);
         this.server = new LiteHttpServer(api, api);
         this.timer = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "ugs-bridge-authority-timer"));
         this.reactions = Executors.newSingleThreadExecutor(r -> daemon(r, "ugs-bridge-machine-reactions"));
         log.addListener(state);
         log.addListener(etaListener);
+        log.addListener(readiness);
         // Machine events arrive on UGS's threads (inside the capture); react on our own thread.
         state.addTriggerListener((trigger, why) -> reactions.execute(() -> onMachine(trigger, why)));
     }
@@ -150,6 +154,7 @@ public final class ApiHost implements AutoCloseable {
         timer.scheduleAtFixedRate(authority::checkExpiry, 5, 5, TimeUnit.SECONDS);
         timer.scheduleAtFixedRate(this::checkSilence, 2, 2, TimeUnit.SECONDS);
         timer.scheduleAtFixedRate(etaEvents::tick, 2, 2, TimeUnit.SECONDS);
+        timer.scheduleAtFixedRate(readiness::tick, 1, 2, TimeUnit.SECONDS);
         LOGGER.info(() -> "ugs-bridge API on http://127.0.0.1:" + port + BridgeApi.BASE + " (viewer "
                 + (StaticFiles.available() ? "packaged" : "missing") + ")");
     }
@@ -160,6 +165,7 @@ public final class ApiHost implements AutoCloseable {
         reactions.shutdownNow();
         log.removeListener(state);
         log.removeListener(etaListener);
+        log.removeListener(readiness);
         if (ownEstimates) {
             estimates.close();
         }
@@ -250,7 +256,78 @@ public final class ApiHost implements AutoCloseable {
 
     /** The machine side of the Telegram commands (D26). */
     public TelegramAccess telegramAccess() {
-        return new TelegramAccess(state, eta, authority, link, log);
+        return new TelegramAccess(state, eta, authority, link, log, readiness::report);
+    }
+
+    /** Twin readiness (D27): what the twin shows that is assumed, missing or has drifted. */
+    public com.willwinder.ugs.nbp.bridge.twin.ReadinessService readiness() {
+        return readiness;
+    }
+
+    /** The readiness checks' view of the machine, from the state tracker and the loaded file. */
+    private final class LiveFacts implements com.willwinder.ugs.nbp.bridge.twin.ReadinessService.Live {
+        private String fpKey;
+        private String fpSha;
+
+        @Override
+        public boolean connected() {
+            return state.connected();
+        }
+
+        @Override
+        public boolean homed() {
+            return state.homed();
+        }
+
+        @Override
+        public double[] wco() {
+            return state.wco();
+        }
+
+        @Override
+        public java.util.Map<String, Double> settings() {
+            java.util.Map<String, Double> out = new java.util.LinkedHashMap<>();
+            com.google.gson.JsonObject all = state.settingsJson().getAsJsonObject("settings");
+            for (var e : all.entrySet()) {
+                com.google.gson.JsonElement v = e.getValue().getAsJsonObject().get("value");
+                if (v != null && v.isJsonPrimitive() && v.getAsJsonPrimitive().isNumber()) {
+                    out.put(e.getKey(), v.getAsDouble());
+                }
+            }
+            return out;
+        }
+
+        @Override
+        public Path file() {
+            com.google.gson.JsonObject f = state.file();
+            if (f != null && f.has("path") && f.get("path").isJsonPrimitive()) {
+                return Path.of(f.get("path").getAsString());
+            }
+            java.io.File lf = link.loadedFile();
+            return lf == null ? null : lf.toPath();
+        }
+
+        @Override
+        public synchronized String fileSha() {
+            com.google.gson.JsonObject f = state.file();
+            if (f != null && f.has("sha256") && f.get("sha256").isJsonPrimitive()) {
+                return f.get("sha256").getAsString();
+            }
+            Path p = file();
+            if (p == null || !Files.isRegularFile(p)) {
+                return null;
+            }
+            try {
+                String key = p + "|" + Files.getLastModifiedTime(p).toMillis() + "|" + Files.size(p);
+                if (!key.equals(fpKey)) {
+                    fpSha = com.willwinder.ugs.nbp.bridge.log.FileFingerprint.of(p).sha256();
+                    fpKey = key;
+                }
+                return fpSha;
+            } catch (Exception e) {
+                return null;
+            }
+        }
     }
 
     /** Live progress and finish time of the streaming job. */

@@ -159,3 +159,23 @@ test('live state takes ETA from /job/state, eta records, eta events and job reco
   applyJobState(s, { stream: 'idle' });
   assert.equal(s.eta, null);
 });
+
+// ------------------------------------------------------------------------------ contract with the plugin (D27)
+
+test('placement checks match the shared cases (bridge/testdata-public/twin-placement-cases.json)', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const pub = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../testdata-public');
+  const spec = JSON.parse(fs.readFileSync(path.join(pub, 'twin-placement-cases.json'), 'utf8'));
+  const prof = normalizeProfile(JSON.parse(fs.readFileSync(path.join(pub, spec.profile), 'utf8')), 'contract');
+  const text = fs.readFileSync(path.join(pub, spec.program), 'utf8');
+  const sidecar0 = JSON.parse(fs.readFileSync(path.join(pub, spec.sidecar), 'utf8'));
+  for (const c of spec.cases) {
+    const sidecar = c.stock ? { ...sidecar0, stock: c.stock } : sidecar0;
+    const program = parseGcode(text);
+    const job = buildJob({ program, header: parseHeader(program.lines), sidecar });
+    const { items } = placementChecks({ profile: prof, stock: job.stock, wco: c.wco, program, job });
+    assert.deepEqual(items.map((i) => i.kind).sort(), [...c.expect].sort(), c.name);
+  }
+});

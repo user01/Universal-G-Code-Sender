@@ -1,0 +1,29 @@
+{
+  "_note": "Shared expectations for the stock placement checks (D27): bridge/viewer/src/twin/placement.js and the plugin's twin/Placement.java must both produce exactly these kinds (stock_on_bitsetter, stock_off_spoilboard, cut_outside_stock) for sample-sign.nc with the profile bridge/profiles/shapeoko4-standard.json. 'stock' overrides the sidecar's stock when present. The Java side also reports outside_envelope, which the viewer shows elsewhere; it is not compared here.",
+  "program": "sample-sign.nc",
+  "sidecar": "sample-sign.job.json",
+  "profile": "../profiles/shapeoko4-standard.json",
+  "cases": [
+    {
+      "name": "middle of the bed",
+      "wco": [-300, -300, -60],
+      "expect": []
+    },
+    {
+      "name": "over the BitSetter (front right)",
+      "wco": [-130, -445, -60],
+      "expect": ["stock_on_bitsetter", "stock_off_spoilboard"]
+    },
+    {
+      "name": "past the right edge of the spoilboard",
+      "wco": [-100, -300, -60],
+      "expect": ["stock_off_spoilboard"]
+    },
+    {
+      "name": "stock smaller than the toolpath",
+      "wco": [-300, -300, -60],
+      "stock": {"size": [100, 60, 12], "origin": "front-left-top"},
+      "expect": ["cut_outside_stock"]
+    }
+  ]
+}

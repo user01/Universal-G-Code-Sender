@@ -328,7 +328,8 @@ public class BridgeApiHttpTest {
         String status = t.status();
         assertTrue(status, status.startsWith("State: Idle\nWork: X0.00 Y0.00 Z0.00\nMachine: X-10.00 Y-20.00 Z-5.00"));
         assertTrue(status, status.contains("Job: none running"));
-        assertTrue(status, status.endsWith("Claude: locked out"));
+        assertTrue(status, status.contains("\nClaude: locked out\nTwin: "));
+        assertTrue(status, status.contains("not_homed")); // D27: one line with the twin warnings
         assertEquals("No job has run since UGS started.", t.eta());
         assertFalse(t.jobRunning());
         f.log.append(LogRecord.Kind.EVENT, LogRecord.Src.OPERATOR, obj("{\"type\":\"stream\",\"event\":\"started\"}"));
@@ -655,6 +656,100 @@ public class BridgeApiHttpTest {
         w.sendClose(1000, "bye").get(5, TimeUnit.SECONDS);
         ApiFixture.await(() -> records(LogRecord.Kind.CLIENT).stream().anyMatch(
                 r -> r.getAsJsonObject("data").get("action").getAsString().equals("disconnect")), "disconnect record");
+    }
+
+    // ------------------------------------------------------------------ twin readiness (D27)
+
+    private static final String STOCK_JOB = "(STOCK: 100 x 80 x 10 mm pine)\n(ZERO: X0 Y0 = stock FRONT-LEFT corner, Z0 = stock TOP)\n"
+            + "G21 G90\nG0 X10 Y10 Z5\nG1 Z-1 F300\nG1 X50 F1000\nG0 Z5\n";
+
+    private static List<String> warningIds(JsonObject readiness) {
+        List<String> ids = new java.util.ArrayList<>();
+        for (var e : readiness.getAsJsonArray("items")) {
+            JsonObject i = e.getAsJsonObject();
+            if (i.get("severity").getAsString().equals("warn")) {
+                ids.add(i.get("id").getAsString());
+            }
+        }
+        return ids;
+    }
+
+    @Test
+    public void readinessIsReadableWhileLockedAndSummarizedInStatus() throws Exception {
+        assertTrue(f.lock.isLocked());
+        Path nc = tmp.newFile("stockless.nc").toPath();
+        Files.writeString(nc, "G21 G90\nG0 X1\n");
+        f.link.file = nc.toFile();
+        JsonObject r = ApiFixture.json(f.get("/twin/readiness"));
+        assertEquals("warnings", r.get("state").getAsString());
+        List<String> ids = warningIds(r);
+        assertTrue(ids.toString(), ids.contains("no_stock"));
+        assertTrue(ids.toString(), ids.contains("not_homed"));
+        assertTrue(ids.toString(), ids.contains("machine_config_assumed"));
+        for (var e : r.getAsJsonArray("items")) {
+            assertTrue(e.getAsJsonObject().has("fix"));
+        }
+        JsonObject s = ApiFixture.json(f.get("/status")).getAsJsonObject("readiness");
+        assertEquals("warnings", s.get("state").getAsString());
+        assertEquals(ids.size(), s.get("warnings").getAsInt());
+        assertTrue(s.getAsJsonArray("ids").toString().contains("no_stock"));
+        assertEquals(200, f.get("/twin/readiness", "v." + f.viewerToken()).statusCode());
+        // a readiness record is logged when the findings change
+        ApiFixture.await(() -> records("event").stream()
+                .anyMatch(e -> e.getAsJsonObject("data").get("type").getAsString().equals("readiness")), "readiness record");
+    }
+
+    @Test
+    public void onlyTheOperatorConfirmsTheStockAndTheConfirmationSurvivesARestart() throws Exception {
+        Path nc = tmp.newFile("stock.nc").toPath();
+        Files.writeString(nc, STOCK_JOB);
+        f.link.file = nc.toFile();
+        assertTrue(warningIds(ApiFixture.json(f.get("/twin/readiness"))).contains("stock_not_confirmed"));
+
+        assertError(f.post("/twin/confirm", "{}"), 423, "locked_by_operator"); // Claude, locked
+        f.unlock(Level.STREAM);
+        assertError(f.post("/twin/confirm", "{}"), 403, "operator_only"); // Claude, unlocked: still not Claude's call
+        assertTrue(warningIds(ApiFixture.json(f.get("/twin/readiness"))).contains("stock_not_confirmed"));
+
+        HttpResponse<String> ok = f.post("/twin/confirm", "{}", "v." + f.viewerToken());
+        assertEquals(ok.body(), 200, ok.statusCode());
+        JsonObject body = ApiFixture.json(ok);
+        assertTrue(body.get("confirmed").getAsBoolean());
+        assertEquals(-10, body.getAsJsonArray("wco").get(0).getAsDouble(), 1e-9);
+        assertFalse(warningIds(body.getAsJsonObject("readiness")).contains("stock_not_confirmed"));
+        assertTrue(Files.isRegularFile(f.home.resolve("twin.json")));
+        assertTrue(records("event").stream().anyMatch(e -> {
+            JsonObject d = e.getAsJsonObject("data");
+            return d.get("type").getAsString().equals("twin") && d.get("action").getAsString().equals("stock_confirmed")
+                    && e.get("src").getAsString().equals("operator");
+        }));
+        // the viewer token still can't do anything else
+        assertError(f.post("/command", "{\"lines\":[\"$$\"]}", "v." + f.viewerToken()), 403, "authority_required");
+
+        Path home = f.home;
+        f.close();
+        f = new ApiFixture(home);
+        f.link.file = nc.toFile();
+        assertFalse(warningIds(ApiFixture.json(f.get("/twin/readiness"))).contains("stock_not_confirmed"));
+    }
+
+    @Test
+    public void confirmNeedsALoadedFile() throws Exception {
+        assertError(f.post("/twin/confirm", "{}", "v." + f.viewerToken()), 409, "not_ready");
+    }
+
+    @Test
+    public void runPromptListsTheTwinWarnings() throws Exception {
+        Path nc = tmp.newFile("run.nc").toPath();
+        Files.writeString(nc, STOCK_JOB);
+        f.link.file = nc.toFile();
+        f.unlock(Level.STREAM);
+        f.prompts.answer = false;
+        HttpResponse<String> r = f.post("/file/run", "{}");
+        assertEquals(r.body(), 202, r.statusCode());
+        assertTrue(warningIds(ApiFixture.json(r).getAsJsonObject("readiness")).contains("stock_not_confirmed"));
+        String asked = f.prompts.asked.get(f.prompts.asked.size() - 1);
+        assertTrue(asked, asked.contains("Twin warnings (they don't block the run)"));
     }
 
     @Test
