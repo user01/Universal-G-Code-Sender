@@ -18,6 +18,10 @@ Then it reads one command per line on stdin and answers with one JSON line on st
     refuse on|off               refuse viewer WebSockets (to show the viewer's locked state)
     disconnect / reconnect      UGS loses / regains the controller
     stop / start                the bridge goes away / comes back on the same port
+
+The bench also answers GET /file/estimate (a stand-in for the plugin's planner estimate: a fixed
+time per motion line plus 60 s per tool change) and emits `eta` records while streaming, so the
+viewer's time display can be exercised. The numbers are synthetic.
     status                      current fake state
     quit
 
@@ -41,9 +45,13 @@ from typing import Any
 from shapeoko_surface.controller.grbl_parser import parse_status
 from shapeoko_surface.controller.simulator import PLACEHOLDER_SETTINGS, SimulatedGrbl, SimWorld
 from shapeoko_surface.core.geometry import Point2, Rect
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
 from starlette.websockets import WebSocket
 
-from ugs_mcp.testing.fake_bridge import FakeBridge
+from ugs_mcp.testing.fake_bridge import API, FakeBridge
 
 HERE = Path(__file__).resolve().parent
 VIEWER = HERE.parent.parent
@@ -56,8 +64,57 @@ PARK = (-222.0, -440.0, -5.0)
 BITSETTER = (-4.0, -449.0)
 
 
+SECONDS_PER_MOVE = 0.4  # synthetic bench estimate
+TOOL_CHANGE_S = 60.0
+
+
+def bench_estimate(lines: list[str]) -> dict[str, Any]:
+    """A GET /file/estimate answer in the plugin's shape, from a fixed per-line cost (synthetic)."""
+    t = 0.0
+    les: list[float] = []
+    changes: list[dict[str, Any]] = []
+    tool: str | None = None
+    for n, raw in enumerate(lines, start=1):
+        code = re.sub(r"\([^)]*\)|;.*$", "", raw).strip().upper()
+        if re.search(r"\bM0*6\b", code):
+            m = re.search(r"\bT(\d+)", code)
+            to = f"T{int(m.group(1)):02d}" if m else None
+            changes.append({"line": n, "from": tool, "to": to, "at_s": round(t, 3)})
+            tool = to
+            t += TOOL_CHANGE_S
+        elif re.search(r"\b[XYZ][-+.\d]", code):
+            t += SECONDS_PER_MOVE
+        les.append(round(t, 3))
+    return {
+        "version": 1,
+        "source": "grbl-planner",
+        "total_s": round(t, 3),
+        "machine_s": round(t - TOOL_CHANGE_S * len(changes), 3),
+        "line_end_s": les,
+        "ops": [],
+        "tools": [],
+        "tool_changes": changes,
+        "assumptions": [
+            f"bench: {SECONDS_PER_MOVE} s per move, {TOOL_CHANGE_S:.0f} s per tool change"
+        ],
+    }
+
+
 class Bench(FakeBridge):
     refuse_viewers = False
+    estimate: dict[str, Any] | None = None
+
+    def app(self) -> Starlette:
+        app = super().app()
+        app.router.routes.insert(0, Route(f"{API}/file/estimate", self.h_estimate))
+        return app
+
+    async def h_estimate(self, request: Request) -> Response:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
+            return r
+        if self.estimate is None:
+            return JSONResponse({"error": "not_found", "message": "no estimate"}, status_code=404)
+        return JSONResponse(self.estimate)
 
     async def ws_events(self, ws: WebSocket) -> None:
         if self.refuse_viewers and "vt" in ws.query_params:
@@ -188,6 +245,7 @@ class Driver:
             f"G10 L2 P1 X{x0} Y{y0} Z{top - 0.5:.3f}", src="operator"
         )  # rough Z, probed later
         info = self.fake.load_file(self.program)
+        self.fake.estimate = bench_estimate(self.lines)
         self.send("G53 G0 Z-5", src="operator")
         self.send(f"G53 G0 X{x0 + 120} Y{y0 + 47}", src="operator")
         self.wait_idle()
@@ -276,9 +334,38 @@ class Driver:
             r = self.send(code, src="ugs", file_line=n)
             if r and r[-1].startswith(("error", "ALARM")):
                 return {"stopped_at": n, "reply": r}
+            if n % 20 == 0:
+                self.eta(n)
         self.next_line = b + 1
         self.wait_idle()
         return {"line": b}
+
+    def eta(self, n: int) -> None:
+        """An `eta` record (and /job/state eta) from the bench estimate, as the plugin sends."""
+        est = self.fake.estimate
+        if est is None:
+            return
+        les = est["line_end_s"]
+        at = les[min(n, len(les)) - 1]
+        nxt = next((c for c in est["tool_changes"] if c["line"] > n), None)
+        eta = {
+            "elapsed_s": round(at, 1),
+            "adjusted_remaining_s": round(est["total_s"] - at, 1),
+            "ratio": 1.0,
+            "predicted_finish": None,
+            "current_op": None,
+            "current_tool": self.tool,
+            "op_remaining_s": None,
+            "next_tool_change": (
+                {"line": nxt["line"], "tool": nxt["to"], "in_s": round(nxt["at_s"] - at, 1)}
+                if nxt
+                else None
+            ),
+            "tool_changes_remaining": sum(1 for c in est["tool_changes"] if c["line"] > n),
+        }
+        self.fake.emit("eta", "bridge", eta)
+        if self.fake.job_state is not None:
+            self.fake.job_state["eta"] = eta
 
     def tool_change(self, n: int, code: str) -> None:
         """The bridge's interceptor (SPEC §11.5, D10): park, swap, BitSetter, return."""

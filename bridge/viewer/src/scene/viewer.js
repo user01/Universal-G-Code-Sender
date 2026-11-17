@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MachineLayer } from './machine.js';
 import { ToolpathLayer } from './toolpath.js';
+import { StockSimLayer } from './stocksim.js';
 import { makeLabel, disposeTree, updateLabelScales } from './labels.js';
 
 export class Viewer {
@@ -38,6 +39,8 @@ export class Viewer {
     this.stockGroup = new THREE.Group();
     this.stockGroup.name = 'stock';
     this.work.add(this.stockGroup);
+    this.stockSim = new StockSimLayer();
+    this.work.add(this.stockSim.group);
     this.zeroGroup = new THREE.Group();
     this.zeroGroup.name = 'work zero';
     this.work.add(this.zeroGroup);
@@ -129,6 +132,8 @@ export class Viewer {
     this.stockMat = new THREE.MeshBasicMaterial({ color: 0xd6a86b, transparent: true, opacity: 0.12, depthWrite: false });
     const mesh = new THREE.Mesh(geo, this.stockMat);
     mesh.position.set(...c);
+    mesh.visible = !this.stockSim.mesh; // the simulated stock replaces the translucent box
+    this.stockFill = mesh;
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xd6a86b, transparent: true, opacity: s.approx || s.originAssumed ? 0.55 : 0.9 }));
     edges.position.set(...c);
     this.stockGroup.add(mesh, edges);
@@ -187,6 +192,19 @@ export class Viewer {
     this.requestRender();
   }
 
+  /** Simulated stock (null removes it and brings back the translucent box). */
+  setSim(sim) {
+    if (sim) this.stockSim.build(sim, this.sectionZ !== null && this.sectionZ !== undefined ? [this.clipPlane] : []);
+    else this.stockSim.dispose();
+    if (this.stockFill) this.stockFill.visible = !sim;
+    this.requestRender();
+  }
+
+  applySimRect(rect) {
+    this.stockSim.applyRect(rect);
+    this.requestRender();
+  }
+
   /** Section plane: keep everything at or below work Z `z`; null disables it. */
   setSection(z) {
     this.sectionZ = z;
@@ -201,6 +219,7 @@ export class Viewer {
     const planes = on ? [this.clipPlane] : [];
     this.toolpath.setClip(planes);
     if (this.stockMat) { this.stockMat.clippingPlanes = planes; this.stockMat.needsUpdate = true; }
+    this.stockSim.setClip(planes);
     this.clipHelper.visible = on;
     if (on && this.profile) {
       const { min, max } = this.profile.envelope;
@@ -217,6 +236,13 @@ export class Viewer {
       box.translate(this.work.position);
     } else if (this.profile) {
       box.set(new THREE.Vector3(...this.profile.envelope.min), new THREE.Vector3(...this.profile.envelope.max));
+      // the whole bed: spoilboard, frame and BitSetter
+      const bed = this.profile.bed;
+      const z = this.machine.spoilZ ?? this.profile.envelope.min[2];
+      const add = (x, y) => box.expandByPoint(new THREE.Vector3(x, y, z));
+      if (bed?.spoilboard) { add(...bed.spoilboard.min); add(...bed.spoilboard.max); }
+      if (bed?.yRails) for (const x of bed.yRails.x) for (const y of bed.yRails.y) add(x, y);
+      if (this.profile.bitsetter?.xy) add(this.profile.bitsetter.xy[0], this.profile.bitsetter.xy[1] - 30);
     } else box.set(new THREE.Vector3(-100, -100, -50), new THREE.Vector3(100, 100, 50));
     return box;
   }

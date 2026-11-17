@@ -221,6 +221,28 @@
         "null"
       ],
       "description": "machine Z of the spoilboard surface with the reference tool; null until measured"
+    },
+    "bed": {
+      "type": "object",
+      "description": "Bed and frame layout for the viewer's digital twin, machine XY (mm). Drawing and stock-placement warnings only; no motion check uses it.",
+      "properties": {
+        "verified": { "type": "boolean" },
+        "source": { "type": "string" },
+        "spoilboard": {
+          "type": "object",
+          "properties": {
+            "min_xy": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+            "max_xy": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+            "thickness": { "type": "number" }
+          }
+        },
+        "frame": {
+          "type": "object",
+          "description": "y_rails: centre X of the two Y rails, their Y span, width and height; x_extrusions: centre Y of the front and back extrusions, their X span, depth and height"
+        },
+        "bitsetter_radius": { "type": "number", "description": "footprint radius around bitsetter.xy that stock must not overlap" },
+        "front": { "type": "string" }
+      }
     }
   },
   "required": [

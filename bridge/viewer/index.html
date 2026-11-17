@@ -36,10 +36,12 @@
       <section id="job-section" hidden>
         <h2>Job</h2>
         <dl id="job-info" class="kv"></dl>
+        <p id="sim-status" class="hint sim"></p>
       </section>
 
       <section id="live-section" hidden>
         <h2>Live <span id="live-link" class="tag link connecting">connecting</span></h2>
+        <div id="eta-line" class="eta-line" hidden></div>
         <dl id="live-info" class="kv"></dl>
         <div id="live-progress" class="progress" hidden><div class="acked"></div><div class="sent"></div></div>
         <div class="row small">
@@ -53,7 +55,7 @@
 
       <section id="wco-section" hidden>
         <h2>Work offset (G54) <span id="wco-tag" class="tag warn">assumed</span></h2>
-        <p id="wco-hint" class="hint">Offline there is no WCO from the machine. The default puts the stock front-left 20&nbsp;mm in from the envelope corner, on a spoilboard 10&nbsp;mm above the lowest Z. Envelope warnings depend on this.</p>
+        <p id="wco-hint" class="hint">Offline there is no WCO from the machine. The default puts the stock front-left 20&nbsp;mm in from the front-left corner of the spoilboard (profile <code>bed</code>, assumed until measured), on a spoilboard 10&nbsp;mm above the lowest Z. Envelope and placement warnings depend on this.</p>
         <div class="row xyz">
           <label>X <input id="wco-x" type="number" step="0.1"></label>
           <label>Y <input id="wco-y" type="number" step="0.1"></label>
@@ -115,6 +117,7 @@
       <div id="empty" class="empty">Open or drop a G-code file to view it.</div>
       <div id="info" class="info" hidden></div>
       <div id="banners" class="banners" aria-live="polite"></div>
+      <div id="eta-pill" class="eta-pill" hidden></div>
       <div id="timeline" hidden>
         <button id="play" type="button" title="Play / pause (space)">▶</button>
         <select id="scrub-mode" title="Scrub by">

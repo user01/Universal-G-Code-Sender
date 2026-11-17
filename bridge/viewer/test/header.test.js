@@ -145,7 +145,10 @@ test('profile spoilboard_z_machine is honored when set', () => {
   assert.equal(spoilboardZ(measured), -78.5);
   assert.equal(normalizeProfile({ ...BUILTIN_PROFILE, spoilboard_z_machine: null }, 'test').spoilboardZ, undefined);
   const stock = stockBox([240, 95, 19.4]);
-  assert.deepEqual(defaultWorkOffset(measured, stock).map((v) => Math.round(v * 1000) / 1000), [-425, -436, -59.1]);
+  // 20 mm in from the spoilboard's front-left (-460, -432) where it is inside the envelope (-445, -456)
+  assert.deepEqual(defaultWorkOffset(measured, stock).map((v) => Math.round(v * 1000) / 1000), [-425, -412, -59.1]);
+  const noBed = normalizeProfile({ ...BUILTIN_PROFILE, bed: undefined, spoilboard_z_machine: -78.5 }, 'test');
+  assert.deepEqual(defaultWorkOffset(noBed, stock).map((v) => Math.round(v * 1000) / 1000), [-425, -436, -59.1]);
 });
 
 test('warnings: below floor and outside envelope', () => {
