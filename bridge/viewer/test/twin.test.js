@@ -138,3 +138,24 @@ test('ETA line: full, partial and empty', () => {
   assert.equal(etaLine(null, now), '');
   assert.equal(normalizeEta({ ratio: 'x' }), null);
 });
+
+// ------------------------------------------------------------------------------ live ETA in the reducer
+
+test('live state takes ETA from /job/state, eta records, eta events and job records; clears on completion', async () => {
+  const { createLiveState, applyRecord, applyJobState } = await import('../src/live/state.js');
+  const s = createLiveState();
+  assert.ok(applyJobState(s, { stream: 'running', line_done: 10, eta: { adjusted_remaining_s: 600 } }).has('eta'));
+  assert.equal(s.eta.remaining_s, 600);
+  let seq = 0;
+  const rec = (kind, data) => ({ seq: ++seq, t: '', kind, src: 'bridge', data });
+  assert.ok(applyRecord(s, rec('eta', { adjusted_remaining_s: 500, current_tool: 'T21' })).has('eta'));
+  assert.equal(s.eta.tool, 'T21');
+  applyRecord(s, rec('event', { type: 'eta', eta: { adjusted_remaining_s: 400 } }));
+  assert.equal(s.eta.remaining_s, 400);
+  applyRecord(s, rec('job', { event: 'progress', eta: { adjusted_remaining_s: 300 } }));
+  assert.equal(s.eta.remaining_s, 300);
+  applyRecord(s, rec('job', { event: 'completed' }));
+  assert.equal(s.eta, null);
+  applyJobState(s, { stream: 'idle' });
+  assert.equal(s.eta, null);
+});

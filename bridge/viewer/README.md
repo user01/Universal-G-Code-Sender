@@ -6,6 +6,8 @@ The plugin will later serve this folder as-is at `/view/`.
 
 ![sample job, iso view](docs/screenshots/sample-iso.png)
 
+![digital twin: bed, BitSetter, stock cut up to line 200](docs/screenshots/sample-twin-iso.png)
+
 ## Open it
 
 ES modules don't load from `file://`, so serve the folder over HTTP. Serve `bridge/` (not only
@@ -60,6 +62,13 @@ from `bridge/mcp` with a simulated GRBL: see "Tests".
 |---|---|
 | Open by drag and drop or the file picker (`.nc` + optional `.job.json` + optional profile) | done |
 | Machine envelope, homing corner, spoilboard, BitSetter, tool-change park (from the profile) | done |
+| Bed twin: spoilboard rectangle, Y rails, front/back extrusions, BitSetter keep-out ring, FRONT marker (profile `bed`, **assumed** until ledger B9/B11–B13 are measured) | done |
+| Stock placed at its machine position: work offset (live G54) + stock box from the sidecar/header | done |
+| Placement warnings: stock over the BitSetter, past the spoilboard, cuts outside the stock | done |
+| Material removal: the stock is cut away up to the scrub position (live: up to the stream's current line) | done |
+| Time from the bridge's planner estimate (`GET /file/estimate`), else rough distance ÷ feed (labelled); per-op duration and end time, per-tool totals, tool-change times | done |
+| Live ETA (`eta` in `/job/state` and `eta` records): "Now: T21 contour · 4 min left in op · job ≈ 18:42 · next tool change in 12 min", clock end per op | done (live mode) |
+| Phone width (390 px): panel under the view, wrapped timeline, ETA pill over the view | done |
 | Work-zero (G54) axes. The offset is an editable input, labeled *assumed* | done |
 | Stock box from the sidecar or the `(STOCK: …)` header | done |
 | Toolpath colored by operation; rapids dashed; plunges in yellow | done |
@@ -75,21 +84,39 @@ from `bridge/mcp` with a simulated GRBL: see "Tests".
 | Warnings in red: cuts below the floor, moves outside the envelope (clickable list) | done |
 | Fixtures (sidecar `fixtures`) drawn as boxes; tabs (sidecar `tabs`) as markers | drawn, not checked |
 | Live tool, trail, planned position, probes, progress, banners, live work offset | done (live mode) |
-| Fixture-crossing warnings, material removal, resume-path overlay | later / J4 |
+| Fixture-crossing warnings, cutting the stock along the actual trail, resume-path overlay | later / J4 |
 
 **Floor** for the "below" warning: sidecar `spoilboard_limit_z`, else a header floor
 (`through cut Z…` in `(STOCK: …)`, or `(FLOOR: Z…)`), else the stock bottom.
 
 **Work offset.** Offline there's no WCO from the machine. The default puts the stock's
-front-left corner 20 mm in from the envelope's front-left corner, with the stock bottom on the
+front-left corner 20 mm in from the front-left corner of the spoilboard (or of the envelope,
+whichever is further in), with the stock bottom on the
 profile's `spoilboard_z_machine` when it is set, else on an assumed spoilboard 10 mm above the
 lowest Z. Envelope warnings and the spoilboard position depend
 on it, and the panel says so. `G53` moves are converted with this offset (the program is
 re-parsed when it changes).
 
-**Time estimate.** Path length at the programmed feed, rapids at `(Rapids: N/min)` from the
-header or 5000 mm/min, plus `G4` dwells. There's no acceleration model. dr_ryan comes out at
-61.5 min against the post's 62.0 min.
+**Time estimate.** When the bridge answers `GET /file/estimate` (the plugin's GRBL planner model:
+acceleration, junction speeds, the controller's `$` settings, tool-change time) the viewer uses its
+per-line times for the scrubber, the legend and the readout, labelled *planner*. A file with a
+different line count is ignored. Otherwise (offline, older plugin, 404) it falls back to path
+length at the programmed feed, rapids at `(Rapids: N/min)` from the header or 5000 mm/min, plus
+`G4` dwells, labelled *rough (distance ÷ feed)*: no acceleration, so short-segment carving files
+come out too short. dr_ryan comes out at 61.5 min rough against the post's 62.0 min.
+
+**Material removal.** Ported from the operator's `cnc-sim-viewer` skill (its licence allows
+copying and modification): a heightfield of the stock top in a Web Worker (`src/sim/`), 0.25 mm
+cells (coarser for big stock, `?cell=0.5` to override), exact flat end-mill sweep and a sampled
+ball profile, keyframe snapshots every K segments so scrubbing back is fast. A tool with an
+unknown diameter or a shape we can't draw (V-bit, chamfer, engraving, tapered, drag) cuts nothing
+and the Job panel names it: a wrong picture is worse than none. The skill's IndexedDB cache isn't
+ported (our jobs simulate in well under a second). It's a preview, not a verification.
+
+**Bed twin.** The profile's `bed` section (spoilboard rectangle, rails, extrusions, BitSetter
+keep-out radius) is laid out from published Shapeoko 4 Standard dimensions around the measured
+BitSetter and is marked `verified: false`; the labels say *assumed*. Ledger B9 and B11–B13 say how
+to measure it.
 
 ## Code layout
 
@@ -104,17 +131,25 @@ src/gcode/   (pure: no DOM, no Three.js; runs in Node)
 src/scene/                  Three.js
   viewer.js                 renderer, cameras, controls, views, section, picking, PNG/glTF
   toolpath.js               merged LineSegments per (operation × cut|plunge|rapid), scrub, pick
-  machine.js                envelope, spoilboard, BitSetter, park
+  machine.js                envelope, bed (spoilboard, rails, extrusions), BitSetter, park, FRONT
+  stocksim.js               simulated stock: heightfield grid displaced from a float texture
   labels.js                 constant-pixel-size sprite labels
 src/data/
   sources.js                OfflineFileSource, UrlSource, LiveSource, sidecar names and check
-  profile.js                profile normalize, built-in fallback, default work offset
+  profile.js                profile normalize (incl. bed), built-in fallback, default work offset
+  estimate.js               /file/estimate → per-line times, rough fallback, op/tool times, ETA text
+src/sim/     (pure: runs in Node and in the worker)
+  heightfield.js            material-removal heightfield, snapshots, dirty rectangles
+  simjob.js                 program + job → simulation input (stock-local), tool models, skips
+  sim-worker.js             module worker around heightfield.js
+src/twin/placement.js       stock machine box, BitSetter/spoilboard/outside-stock checks (pure)
 src/live/    (pure: runs in Node)
   state.js                  reducer: /status, /job/state and log records → live viewer state
   connection.js             authenticated GETs, WS /events, reconnect with backoff, link states
 src/scene/live.js           live tool, trail, planned marker, probe hits
 src/ui/app.js               panel, legend, scrubber, hover, export
-src/ui/live.js              live controller: connection → reducer → scene and panel
+src/ui/live.js              live controller: connection → reducer → scene and panel; estimate, ETA
+src/ui/sim.js               drives the simulation worker from the scrubber
 test/*.test.js              node --test
 test/live/                  live integration bench (fake bridge + headless Chrome)
 vendor/three-0.170.0/       pinned Three.js (see vendor/README.md)
@@ -148,6 +183,13 @@ The tests cover:
 - **Live state** (`test/live-state.test.js`): the reducer on synthetic record streams (position,
   WCO, trail, stream progress, probes, origins, tool change, alarms, disconnect, lock, snapshots,
   100k records in ~20 ms) and the connection (auth header, `vt`, backoff, link states).
+- **Simulation** (`test/sim.test.js`): a straight cut removes exactly the cells within the cutter
+  radius (24 cells for a 6 mm cutter at 0.25 mm), nothing above the stock, scrubbing forward,
+  back and to the end matches the full build, a ball groove follows its profile, cell coarsening,
+  tool models and skipped tools.
+- **Twin and time** (`test/twin.test.js`): stock machine box, BitSetter/spoilboard/outside-stock
+  warnings, the bed section, the `/file/estimate` mapping and its fallback, op/tool times, the
+  ETA line and the reducer's `eta` handling.
 
 **Live integration** (needs `uv` and Google Chrome; playwright-core is not a repo dependency):
 
@@ -161,7 +203,9 @@ cd bridge && PLAYWRIGHT=/tmp/pw/node_modules/playwright-core/index.mjs node view
 on stdin (home, probe, stream lines with a simulated tool-change interceptor, alarm, lock,
 disconnect, stop/start). `drive.mjs` opens the viewer in headless Chrome, checks the live state
 after each step and saves screenshots. It uses dr_ryan when `bridge/testdata/nc/` has it, else
-the public sample.
+the public sample. The bench also answers `GET /file/estimate` with a synthetic estimate (0.4 s per
+move, 60 s per tool change) and emits `eta` records while streaming, so the run checks that the
+viewer switches to the planner estimate and shows the ETA pill.
 
 ## Performance
 
