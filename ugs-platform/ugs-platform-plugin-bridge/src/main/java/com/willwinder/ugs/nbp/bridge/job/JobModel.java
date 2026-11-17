@@ -177,7 +177,7 @@ public final class JobModel {
     }
 
     /** Removes {@code (...)} comments (nesting allowed), {@code ;} comments and {@code %}. */
-    static String stripComments(String raw) {
+    public static String stripComments(String raw) {
         StringBuilder sb = new StringBuilder(raw.length());
         int depth = 0;
         for (int i = 0; i < raw.length(); i++) {

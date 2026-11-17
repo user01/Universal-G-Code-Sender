@@ -76,6 +76,21 @@
   "_rapid_note": "the controller allows 10000 mm/min on X/Y ($110/$111, ledger A2), but rapid_mm_min is also the MCP feed cap for Claude's moves, so it stays at 5000",
   "planner_blocks": 14,
   "rx_buffer_bytes": 128,
+  "motion": {
+    "max_rate_mm_min": [
+      10000,
+      10000,
+      1000
+    ],
+    "accel_mm_s2": [
+      500,
+      500,
+      270
+    ],
+    "junction_deviation_mm": 0.02,
+    "arc_tolerance_mm": 0.01,
+    "source": "controller $$ read 2026-11-16 ($110-$112, $120-$122, $11, $12; ledger A2). The live $$ wins when the bridge has seen it"
+  },
   "_planner_note": "from the controller's $I [OPT:VNPR,14,128] (ledger A4); the bridge uses the live $I value once it has seen one. BitSetter xy measured 2026-11-16 (ledger B6)",
   "spoilboard_z_machine": null,
   "_ledger": "bridge/docs/machine-ledger.md"

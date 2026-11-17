@@ -41,6 +41,8 @@ public class MachineProfile {
     public Integer plannerBlocks;
     /** GRBL serial RX buffer in bytes; the controller's {@code [OPT:…]} wins when it has been seen. */
     public Integer rxBufferBytes;
+    /** GRBL motion limits for time estimates; the controller's {@code $$} wins when it has been seen. */
+    public MotionLimits motion;
 
     public static class Envelope {
         public double[] min;
@@ -99,6 +101,18 @@ public class MachineProfile {
          * {@code [dx, dy]} (ledger B3; null until measured). The work XY origin is {@code center + vector}.
          */
         public double[] boreCenterToCorner;
+    }
+
+    /**
+     * {@code $110-$112} (mm/min), {@code $120-$122} (mm/s²), {@code $11}, {@code $12}, as the controller had them
+     * when last read (ledger A2). Used by the time estimator when the bridge hasn't seen {@code $$} this session.
+     */
+    public static class MotionLimits {
+        public double[] maxRateMmMin;
+        public double[] accelMmS2;
+        public Double junctionDeviationMm;
+        public Double arcToleranceMm;
+        public String source;
     }
 
     public static class Spindle {

@@ -200,6 +200,21 @@
       "minimum": 16,
       "description": "GRBL serial RX buffer bytes, as $I reports in [OPT:<codes>,<blocks>,<rx bytes>]; the live $I value wins"
     },
+    "motion": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "GRBL motion limits for the planner time estimate ($110-$112 mm/min, $120-$122 mm/s2, $11, $12); the live $$ wins",
+      "properties": {
+        "max_rate_mm_min": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 3, "maxItems": 3},
+        "accel_mm_s2": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 3, "maxItems": 3},
+        "junction_deviation_mm": {"type": ["number", "null"], "minimum": 0},
+        "arc_tolerance_mm": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "source": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
     "spoilboard_z_machine": {
       "type": [
         "number",
