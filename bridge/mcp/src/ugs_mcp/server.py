@@ -67,7 +67,9 @@ operator in UGS. You may switch the router off with send(['M5']). hold, resume a
 while unlocked. Every motion call states its expected outcome (expect), which is logged.
 plan_resume shows a resume plan; start_resume and run_file need Stream authority and the
 operator's confirmation. analyze_file and prepare_file work on local G-code files without
-UGS. prepare_file never edits the original; it writes a sibling copy and returns a diff."""
+UGS. prepare_file never edits the original; it writes a sibling copy and returns a diff.
+status, job_state, run_file and start_resume list the twin readiness warnings (D27): pass them
+on to the operator. Only the operator confirms the stock placement (bridge panel or 3D view)."""
 
 
 async def _guard[T](aw: Awaitable[T]) -> T:
@@ -90,8 +92,17 @@ def build_server(client: BridgeClient | None = None) -> MCPServer:
     @mcp.tool()
     async def status() -> str:
         """Controller and bridge state in plain words: state, positions, work offset, inputs
-        ("probe input active"), alarm, Claude's authority/lock, and the stream."""
-        return status_text(await _guard(bridge.status()))
+        ("probe input active"), alarm, Claude's authority/lock, the stream, and the twin
+        readiness: each warning about what the 3D twin shows being assumed, missing or out of
+        sync with the machine, with its fix (tell the operator; they never block anything)."""
+        s = await _guard(bridge.status())
+        readiness = None
+        if s.get("readiness") is not None:
+            try:
+                readiness = await bridge.twin_readiness()
+            except BridgeError:
+                readiness = None
+        return status_text(s, readiness)
 
     @mcp.tool()
     async def console(since: int = 0, limit: int = 200) -> str:

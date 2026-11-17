@@ -424,7 +424,9 @@
             "interceptor",
             "controller_silent",
             "controller_responding",
-            "eta"
+            "eta",
+            "readiness",
+            "twin"
           ]
         }
       },

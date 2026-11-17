@@ -403,6 +403,35 @@
               "type": "boolean"
             }
           }
+        },
+        "readiness": {
+          "description": "D27 twin readiness summary; the full list with messages and fixes is GET /twin/readiness.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "managed",
+                "warnings"
+              ]
+            },
+            "warnings": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "infos": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         }
       },
       "required": [

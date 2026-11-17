@@ -24,7 +24,14 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from ugs_mcp.bridge_client import TERMINAL_COMMAND_STATES, BridgeClient, BridgeError
-from ugs_mcp.describe import ALARMS, ERRORS, eta_lines, pins_words, report_age
+from ugs_mcp.describe import (
+    ALARMS,
+    ERRORS,
+    eta_lines,
+    pins_words,
+    readiness_lines,
+    report_age,
+)
 from ugs_mcp.gcode.analyze import analyze_path
 from ugs_mcp.safety import (
     Check,
@@ -317,6 +324,18 @@ def _awaiting(res: dict[str, Any], what: str) -> str:
 def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: ProfileGetter) -> None:
     mo = Motion(bridge, profile)
 
+    async def twin_warnings(given: dict[str, Any] | None = None) -> list[str]:
+        """D27 readiness warnings as lines (empty when managed or unavailable)."""
+        r = given
+        if r is None:
+            try:
+                r = await bridge.twin_readiness()
+            except BridgeError:
+                return []
+        if not r or not any(i.get("severity") == "warn" for i in r.get("items") or []):
+            return []
+        return readiness_lines(r)
+
     @mcp.tool()
     async def move(
         x: float | None = None,
@@ -590,11 +609,14 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
         tool, next tool change; then the journal: file, stream state, last line acknowledged
         and known done, WCO, BitSetter reference, modal state."""
         js = await _guard(bridge.job_state())
+        twin = await twin_warnings()
         if js is None:
-            return "No job journal yet (nothing has been streamed in this bridge home)."
+            return "\n".join(
+                ["No job journal yet (nothing has been streamed in this bridge home).", *twin]
+            )
         eta = eta_lines(js.get("eta"))
         if "file" not in js:
-            return "\n".join(eta or ["No job journal yet."])
+            return "\n".join([*(eta or ["No job journal yet."]), *twin])
         f = js.get("file") or {}
         md = js.get("modal") or {}
         out = [
@@ -608,6 +630,7 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
         ]
         if md:
             out.append("Modal: " + " ".join(str(v) for v in md.values() if v is not None) + ".")
+        out.extend(twin)
         out.append("Plan a restart with plan_resume(line | operation | 'stopped').")
         return "\n".join(out)
 
@@ -681,10 +704,14 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
                 " request_authority(level='stream', reason=...)."
             )
         await _guard(bridge.resume(plan_id))
-        return (
+        out = [
             f"Resume {plan_id} is waiting for the operator's confirmation in UGS. Nothing runs"
             " until they confirm; follow it with status and job_state."
-        )
+        ]
+        twin = await twin_warnings()
+        if twin:
+            out.extend([*twin, "Tell the operator about these before they confirm."])
+        return "\n".join(out)
 
     @mcp.tool()
     async def run_file(path: str) -> str:
@@ -715,7 +742,7 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
         wco = list(machine.wco) if machine.wco else None
         analysis = await anyio.to_thread.run_sync(lambda: analyze_path(p, profile=prof, wco=wco))
         info = await _guard(bridge.file_load(str(p)))
-        await _guard(bridge.file_run())
+        run = await _guard(bridge.file_run())
         warn = [w for w in analysis.get("warnings") or [] if w.get("level") in ("error", "warn")]
         out = [
             f"Loaded {p.name} ({info.get('lines')} lines, sha256 {str(info.get('sha256'))[:12]}…).",
@@ -725,4 +752,9 @@ def register_motion_tools(mcp: MCPServer, bridge: BridgeClient, profile: Profile
         if warn:
             out.append(f"{len(warn)} warning(s), first ones:")
             out.extend(f"  - {w['level'].upper()}: {w['message']}" for w in warn[:5])
+        twin = await twin_warnings(run.get("readiness"))
+        if twin:
+            out.extend(
+                [*twin, "The operator sees these in the run dialog too; they don't block it."]
+            )
         return "\n".join(x for x in out if x)

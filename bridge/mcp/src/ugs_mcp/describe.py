@@ -118,7 +118,7 @@ def silent_text(age: float) -> str:
     )
 
 
-def status_text(s: dict[str, Any]) -> str:
+def status_text(s: dict[str, Any], readiness: dict[str, Any] | None = None) -> str:
     out: list[str] = []
     conn = s.get("connection") or {}
     if conn.get("connected"):
@@ -190,8 +190,38 @@ def status_text(s: dict[str, Any]) -> str:
             + (f", tool {icp['tool']}" if icp.get("tool") else "")
             + "."
         )
+    if readiness is not None:
+        out.extend(readiness_lines(readiness))
+    elif s.get("readiness"):
+        r = s["readiness"]
+        ids = r.get("ids") or []
+        out.append(
+            "Twin: managed."
+            if not ids
+            else f"Twin: {len(ids)} warning(s) ({', '.join(ids)}); details in twin readiness."
+        )
     out.append(f"(log seq {s.get('seq', '?')})")
     return "\n".join(out)
+
+
+def readiness_lines(r: dict[str, Any] | None, infos: bool = False) -> list[str]:
+    """D27: the twin readiness warnings (and, if asked, the infos) with their fixes."""
+    if not r:
+        return []
+    items = [i for i in r.get("items") or [] if infos or i.get("severity") == "warn"]
+    warns = [i for i in items if i.get("severity") == "warn"]
+    if not warns and not items:
+        return ["Twin: managed (everything it shows is measured, confirmed and in sync)."]
+    head = (
+        f"Twin: {len(warns)} warning(s) - what the 3D view shows may not match the machine:"
+        if warns
+        else "Twin: managed."
+    )
+    out = [head]
+    for i in items:
+        tag = "WARN" if i.get("severity") == "warn" else "info"
+        out.append(f"  - {tag} {i.get('id')}: {i.get('message')} Fix: {i.get('fix')}")
+    return out
 
 
 def record_line(r: dict[str, Any]) -> str:

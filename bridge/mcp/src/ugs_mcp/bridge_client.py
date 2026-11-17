@@ -110,6 +110,12 @@ def error_from_response(status: int, body: Any) -> BridgeError:
             status=status,
             code=code or "unauthorized",
         )
+    if status == 403 and code == "operator_only":
+        return BridgeForbiddenError(
+            f"Only the operator can do this, in UGS ({message or 'bridge panel or 3D view'}).",
+            status=status,
+            code=code,
+        )
     if status == 403:
         level = str(required or "a higher")
         return BridgeForbiddenError(
@@ -225,6 +231,16 @@ class BridgeClient:
             return dict(await self.get("/file/estimate", lines=0))
         except BridgeError as exc:
             if exc.status in (404, 503):
+                return None
+            raise
+
+    async def twin_readiness(self) -> dict[str, Any] | None:
+        """``GET /twin/readiness`` (D27): what the twin shows that is assumed, missing or has
+        drifted; None from a bridge without it."""
+        try:
+            return dict(await self.get("/twin/readiness"))
+        except BridgeError as exc:
+            if exc.status == 404:
                 return None
             raise
 

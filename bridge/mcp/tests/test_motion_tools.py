@@ -485,6 +485,7 @@ ETA = {
 
 
 async def test_job_state_shows_the_eta(sim_fake: FakeBridge, home: Path) -> None:
+    sim_fake.readiness = MANAGED
     async with _client(home) as client:
         sim_fake.job_state = {**JOURNAL, "eta": ETA}
         text, err = await _call(client, "job_state")
@@ -513,6 +514,69 @@ async def test_job_state_shows_the_eta(sim_fake: FakeBridge, home: Path) -> None
         assert text == (
             "Last job dr_ryan.nc: completed after 75 min (machine time 72 min, estimated 69 min)."
         )
+
+
+MANAGED: dict[str, Any] = {"state": "managed", "warnings": 0, "infos": 0, "items": []}
+TWIN_WARNINGS: dict[str, Any] = {
+    "state": "warnings",
+    "warnings": 2,
+    "infos": 1,
+    "items": [
+        {
+            "id": "stock_not_confirmed",
+            "severity": "warn",
+            "message": "You haven't confirmed where this file's stock is.",
+            "fix": "Press Confirm stock.",
+        },
+        {
+            "id": "g54_changed_outside",
+            "severity": "warn",
+            "message": "G54 changed outside the bridge since the last session.",
+            "fix": "Re-check the work zero and re-take the BitSetter reference.",
+        },
+        {
+            "id": "controller_travel_differs",
+            "severity": "info",
+            "message": "Max travel differs.",
+            "fix": "Nothing to do.",
+        },
+    ],
+}
+
+
+async def test_status_and_job_state_list_the_twin_warnings(
+    sim_fake: FakeBridge, home: Path, validate: Callable[[str, Any], None]
+) -> None:
+    sim_fake.readiness = TWIN_WARNINGS
+    validate("status", sim_fake.bridge_status())
+    async with _client(home) as client:
+        text, err = await _call(client, "status")
+        assert not err
+        assert "Twin: 2 warning(s) - what the 3D view shows may not match the machine:" in text
+        assert (
+            "  - WARN g54_changed_outside: G54 changed outside the bridge since the last session."
+            " Fix: Re-check the work zero and re-take the BitSetter reference."
+        ) in text
+        assert "controller_travel_differs" not in text  # infos stay out of status
+        text, err = await _call(client, "job_state")
+        assert "WARN stock_not_confirmed" in text
+        sim_fake.readiness = MANAGED
+        text, err = await _call(client, "status")
+        assert "Twin: managed" in text
+        text, err = await _call(client, "job_state")
+        assert "Twin" not in text
+
+
+async def test_only_the_operator_confirms_the_stock(sim_fake: FakeBridge, home: Path) -> None:
+    http = BridgeClient(home)
+    sim_fake.set_level("stream")
+    with pytest.raises(BridgeForbiddenError) as exc:
+        await http.post("/twin/confirm", {})
+    assert exc.value.code == "operator_only"
+    sim_fake.set_locked(True)
+    r = await http.twin_readiness()
+    assert r is not None  # reads work while locked
+    assert r["state"] == "warnings"
 
 
 async def test_job_state_plan_and_start_resume(
@@ -578,6 +642,7 @@ async def test_run_file_needs_stream_and_operator(
         assert not err, text
         assert "Loaded square.nc (4 lines" in text
         assert "Waiting for the operator to confirm the run in UGS" in text
+        assert "WARN stock_not_confirmed" in text  # D27: the twin warnings come with the request
         assert sim_fake.stream["state"] == "idle"
         dialog = sim_fake.confirm_operator(kind="file_run")
         assert "square.nc" in dialog.detail

@@ -162,6 +162,9 @@ class FakeBridge:
         self.job_state: dict[str, Any] | None = None
         #: ``GET /file/estimate`` (the Java bridge computes it; tests set it), None = 404
         self.file_estimate: dict[str, Any] | None = None
+        # D27: a test may set the whole GET /twin/readiness answer; None = derived
+        self.readiness: dict[str, Any] | None = None
+        self.twin_confirmed = False
         self.plans: dict[str, dict[str, Any]] = {}
         self.dialogs: list[Dialog] = []
         self.stream: dict[str, Any] = {"state": "idle"}
@@ -836,6 +839,8 @@ class FakeBridge:
             Route(f"{API}/origins", self.h_origins),
             Route(f"{API}/origins/apply", self.h_origins_apply, methods=["POST"]),
             Route(f"{API}/job/state", self.h_job_state),
+            Route(f"{API}/twin/readiness", self.h_twin_readiness),
+            Route(f"{API}/twin/confirm", self.h_twin_confirm, methods=["POST"]),
             Route(f"{API}/job/resume/plan", self.h_resume_plan, methods=["POST"]),
             Route(f"{API}/job/resume", self.h_resume, methods=["POST"]),
             Route(f"{API}/file/load", self.h_file_load, methods=["POST"]),
@@ -910,12 +915,90 @@ class FakeBridge:
                 "stream": stream,
                 "interceptor": None,
                 "tool": None,
+                "readiness": self._readiness_summary(),
             }
 
     async def h_status(self, request: Request) -> Response:
         if (r := self._auth(request, viewer_ok=True)) is not None:
             return r
         return JSONResponse(self.bridge_status())
+
+    # Twin readiness (D27) -----------------------------------------------------------------
+
+    def twin_readiness(self) -> dict[str, Any]:
+        """``GET /twin/readiness``: ``self.readiness`` when a test set it, else a minimal one
+        (connection, homing and stock confirmation only)."""
+        if self.readiness is not None:
+            return self.readiness
+        items: list[dict[str, Any]] = []
+        if not self.connected:
+            items.append(
+                {
+                    "id": "not_connected",
+                    "severity": "info",
+                    "message": "No controller connected: the twin shows the last known state.",
+                    "fix": "Connect in UGS.",
+                }
+            )
+        elif not self.homed:
+            items.append(
+                {
+                    "id": "not_homed",
+                    "severity": "warn",
+                    "message": "Not homed since connecting (or since an alarm): machine"
+                    " positions, and so the twin, may be off.",
+                    "fix": "Home the machine ($H) in UGS.",
+                }
+            )
+        if self.file_info is not None and not self.twin_confirmed:
+            items.append(
+                {
+                    "id": "stock_not_confirmed",
+                    "severity": "warn",
+                    "message": "You haven't confirmed where this file's stock is.",
+                    "fix": "Check the stock, then press Confirm stock (bridge panel or 3D view).",
+                }
+            )
+        warns = [i for i in items if i["severity"] == "warn"]
+        return {
+            "state": "warnings" if warns else "managed",
+            "warnings": len(warns),
+            "infos": len(items) - len(warns),
+            "items": items,
+        }
+
+    def _readiness_summary(self) -> dict[str, Any]:
+        r = self.twin_readiness()
+        ids = [i["id"] for i in r.get("items", []) if i.get("severity") == "warn"]
+        return {
+            "state": r.get("state"),
+            "warnings": len(ids),
+            "infos": len(r.get("items", [])) - len(ids),
+            "ids": ids,
+        }
+
+    async def h_twin_readiness(self, request: Request) -> Response:
+        if (r := self._auth(request, viewer_ok=True)) is not None:
+            return r
+        return JSONResponse(self.twin_readiness())
+
+    async def h_twin_confirm(self, request: Request) -> Response:
+        """Only the operator confirms the stock (the viewer token); Claude's token is refused."""
+        if self._is_viewer(request.headers.get("authorization", "")):
+            if self.file_info is None:
+                return _err(409, "not_ready", "no file loaded")
+            self.twin_confirmed = True
+            self.emit(
+                "event", "operator", {"type": "twin", "action": "stock_confirmed", "by": "viewer"}
+            )
+            return JSONResponse({"confirmed": True, "readiness": self.twin_readiness()})
+        if (r := self._auth(request)) is not None:
+            return r
+        return _err(
+            403,
+            "operator_only",
+            "only the operator confirms the stock placement (bridge panel or 3D view)",
+        )
 
     def _query_params(
         self, request: Request, kinds_fixed: tuple[str, ...] | None = None
@@ -1258,7 +1341,9 @@ class FakeBridge:
                     on_accept=accepted,
                 )
             )
-        return JSONResponse({"state": "awaiting_operator"}, status_code=202)
+        return JSONResponse(
+            {"state": "awaiting_operator", "readiness": self.twin_readiness()}, status_code=202
+        )
 
     async def h_command_get(self, request: Request) -> Response:
         if (r := self._auth(request, viewer_ok=True)) is not None:
