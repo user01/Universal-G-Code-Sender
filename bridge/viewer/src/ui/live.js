@@ -10,12 +10,13 @@ import { LiveLayer } from '../scene/live.js';
 import { normalizeProfile } from '../data/profile.js';
 import { lastSegAtOrBefore } from '../gcode/parser.js';
 import { toolId } from '../gcode/header.js';
+import { etaLine } from '../data/estimate.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const f3 = (v) => (typeof v === 'number' ? v.toFixed(3) : '–');
 const xyz = (p) => (p ? `X${f3(p[0])} Y${f3(p[1])} Z${f3(p[2])}` : '–');
-const ALL = ['controller', 'trail', 'wco', 'stream', 'probes', 'banners', 'authority', 'connection', 'file', 'tool', 'job', 'link'];
+const ALL = ['controller', 'trail', 'wco', 'stream', 'probes', 'banners', 'authority', 'connection', 'file', 'tool', 'job', 'link', 'eta'];
 
 export class LiveController {
   /**
@@ -58,11 +59,14 @@ export class LiveController {
     $('wco-tag').className = 'tag live';
     $('wco-hint').textContent = 'The work offset comes from the machine (status WCO and origin records). Typing a value here overrides the view until the next change.';
     this._tick = setInterval(() => { if (this.state.link !== 'online') this._mark('banners'); }, 1000);
+    this._etaTick = setInterval(() => { if (this.state.eta) this._mark('eta'); }, 30000); // the finish clock drifts with "now"
     this.conn.start();
   }
 
   stop() {
     clearInterval(this._tick);
+    clearInterval(this._etaTick);
+    clearTimeout(this._estTimer);
     this.conn.stop();
   }
 
@@ -115,6 +119,25 @@ export class LiveController {
     this.app.loadJob(gcode, null, wco ? { wco, wcoSource: 'live', keepView: !!this.app.program } : { keepView: !!this.app.program });
     $('file-name').textContent = `${gcode.name} (loaded in UGS)`;
     this._mark(...ALL);
+    this._loadEstimate(this.programSha);
+  }
+
+  /**
+   * GET /file/estimate: the plugin's planner estimate for the loaded program. 404 (older plugin, or
+   * no program) keeps the rough estimate; a 202/empty answer while it's still computing is retried.
+   */
+  async _loadEstimate(sha, attempt = 0) {
+    clearTimeout(this._estTimer);
+    let est = null;
+    try { est = await this.conn.getOptional('/file/estimate'); } catch (e) { console.warn('estimate', e.message); }
+    if (sha !== this.programSha) return; // another program was loaded meanwhile
+    if (est?.sha256 && sha && est.sha256 !== sha) est = null;
+    if (est && !Array.isArray(est.line_end_s) && attempt < 5) {
+      this._estTimer = setTimeout(() => this._loadEstimate(sha, attempt + 1), 2000);
+      return;
+    }
+    this.estimate = est;
+    this.app.setEstimate(est);
   }
 
   _onRecord(rec) {
@@ -168,6 +191,7 @@ export class LiveController {
     if (ch.has('trail')) this.layer.setTrail(st.trail);
     if (ch.has('probes')) { this.layer.setProbes(st.probes); this._fillProbes(); }
     if (ch.has('stream') || ch.has('file') || ch.has('job')) this._stream();
+    if (ch.has('eta') || ch.has('stream')) this._eta();
     if (ch.size) this._fillInfo();
     if (ch.has('banners') || ch.has('link') || ch.has('connection') || ch.has('file') || ch.has('stream')) this._banners();
     this.viewer.requestRender();
@@ -212,6 +236,13 @@ export class LiveController {
       this.layer.setPlanned([p[o], p[o + 1], p[o + 2]], `planned · line ${cur.line} (${cur.basis})`);
     } else this.layer.setPlanned(null);
     if (this.follow && streaming(st) && cur.line !== app.scrubLine) app.scrubTo(cur.line);
+  }
+
+  _eta() {
+    const eta = streaming(this.state) ? this.state.eta : null;
+    const text = eta ? etaLine(eta) : '';
+    for (const id of ['eta-line', 'eta-pill']) { $(id).textContent = text; $(id).hidden = !text; }
+    this.app.setLiveEta(eta);
   }
 
   _fillInfo() {

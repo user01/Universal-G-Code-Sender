@@ -97,8 +97,22 @@ input[type=range] { accent-color: var(--accent); }
 .banner.offline, .banner.disconnected, .banner.connecting, .banner.nofile { background: #262c36; border-color: #5a6575; color: #dfe5ec; }
 .banner.locked { background: #33224a; border-color: #a77bf3; color: #e7d6fb; }
 
+/* ---- digital twin: simulated stock, placement, time --------------------------------------- */
+.warnish { color: var(--amber); }
+.legend .end { color: var(--muted); }
+.sim.computing { color: #9fb4cc; }
+.sim.partial, .sim.error { color: var(--amber); }
+.eta-line { font-weight: 600; margin: 4px 0 6px; color: #ffe2a8; }
+.eta-pill { position: absolute; left: 12px; right: 12px; bottom: 64px; margin: 0 auto; width: fit-content; max-width: calc(100% - 24px); background: rgba(27,32,40,.92); border: 1px solid #6b4a22; color: #ffe2a8; border-radius: 8px; padding: 5px 12px; font-weight: 600; pointer-events: none; z-index: 2; }
+
 @media (max-width: 760px) {
   #app { flex-direction: column-reverse; }
   #panel { width: auto; height: 45%; border-right: 0; border-top: 1px solid var(--line); padding: 8px 16px; }
   #stage { flex: 1; min-height: 0; }
+  #timeline { left: 8px; right: 8px; bottom: 8px; gap: 6px; padding: 5px 8px; flex-wrap: wrap; }
+  #scrub-readout { min-width: 0; width: 100%; text-align: left; white-space: normal; font-size: 11px; order: 3; }
+  .eta-pill { bottom: 84px; font-size: 12px; }
+  .info { max-height: 40%; left: 8px; top: 8px; font-size: 12px; }
+  .legend li { grid-template-columns: 18px 12px minmax(0, 1fr) auto; }
+  .row.xyz input { width: 64px; }
 }

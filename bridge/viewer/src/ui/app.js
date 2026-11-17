@@ -5,11 +5,13 @@ import { buildJob, analyzeWarnings, opCutBounds } from '../gcode/job.js';
 import { normalizeProfile, defaultWorkOffset } from '../data/profile.js';
 import { OfflineFileSource } from '../data/sources.js';
 import { opColor } from '../scene/toolpath.js';
+import { SimController } from './sim.js';
+import { roughEstimate, bridgeEstimate, opTimes, toolTimes, duration, clock, opFinishClock } from '../data/estimate.js';
+import { placementChecks } from '../twin/placement.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v, d = 2) => (v === undefined || v === null || Number.isNaN(v) ? '–' : (Math.round(v * 10 ** d) / 10 ** d).toString());
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
 export class App {
   /** @param {import('../scene/viewer.js').Viewer} viewer */
@@ -24,6 +26,10 @@ export class App {
     this.pinnedLine = null;
     this.scrubLine = 0;
     this.playing = false;
+    this.bridgeEst = null; // raw GET /file/estimate (live mode)
+    this.liveEta = null; // normalized ETA while a job runs (live mode)
+    this.sim = new SimController(viewer, (s) => this._simStatus(s));
+    this.simCell = Number(new URLSearchParams(globalThis.location?.search ?? '').get('cell')) || undefined;
     this._bindUi();
     this._stats();
   }
@@ -57,7 +63,10 @@ export class App {
     const firstJob = buildJob({ program: first, header, sidecar });
     if (wco) { this.wco = wco; this.wcoUser = true; this.wcoSource = wcoSource ?? 'user'; } else if (!this.wcoUser || !this.wco) { this.wco = defaultWorkOffset(this.profile, firstJob.stock); this.wcoSource = 'assumed'; }
     this.header = header;
+    if (gcode.text !== this._estForText) this.bridgeEst = null; // an estimate belongs to one program
     this._rebuild(first);
+    this._computeEstimate();
+    this.sim.start(this.program, this.job, { cell: this.simCell });
     this.timing = { parse: performance.now() - t0 };
     $('file-name').textContent = gcode.name + (sidecar ? ' + sidecar' : '');
     $('empty').hidden = true;
@@ -92,6 +101,7 @@ export class App {
     const spoilZ = spoilMeasured ? this.profile.spoilboardZ : this.wco[2] + (job.stock ? job.stock.min[2] : job.floor ? job.floor.z : -10);
     this.viewer.setJob(program, job, warnings);
     this.viewer.setWorkOffset(this.wco, spoilZ);
+    this.placement = placementChecks({ profile: this.profile, stock: job.stock, wco: this.wco, program, job, wcoSource: this.wcoSource });
     $('wco-tag').textContent = this.wcoSource;
     $('wco-tag').className = `tag ${this.wcoSource === 'live' ? 'live' : 'warn'}`;
     this.viewer.setZeroLabel(`G54 zero (${this.wcoSource})\nWCO X${fmt(this.wco[0], 1)} Y${fmt(this.wco[1], 1)} Z${fmt(this.wco[2], 1)}`);
@@ -131,8 +141,12 @@ export class App {
       const c = header.cutExtent;
       add('Cut extent', `X ${c.x[0]}..${c.x[1]} Y ${c.y[0]}..${c.y[1]} Zmin ${c.zmin} <span class="hint">(header)</span>`);
     }
-    const est = `${mmss(program.totalTime)} estimated${header.estRuntimeMin ? ` · header ${header.estRuntimeMin} min` : ''}`;
-    add('Runtime', `${est} <span class="hint">(feeds, rapids at ${this.header.rapidRate ?? 5000} mm/min, no acceleration)</span>`);
+    const e = this.estimate;
+    const est = `${duration(e.total)}${header.estRuntimeMin ? ` · header ${header.estRuntimeMin} min` : ''}`;
+    add('Runtime', `${est} <span class="tag ${e.source === 'rough' ? 'warn' : 'ok'}">${esc(e.label)}</span>${e.assumptions.length ? `<br><span class="hint">${esc(e.assumptions.join('; '))}</span>` : ''}`);
+    const per = toolTimes(e, job.ops).filter((t) => t.s > 0);
+    if (per.length > 1) add('Per tool', per.map((t) => `<b>${esc(t.tool !== null ? toolId(t.tool) : '?')}</b> ${duration(t.s)}`).join(' · '));
+    if (e.toolChanges.length) add('Tool changes', e.toolChanges.map((t) => `line ${t.line}${t.to !== null && t.to !== undefined ? ` → ${esc(typeof t.to === 'number' ? toolId(t.to) : String(t.to))}` : ''} at ${duration(t.at_s)}`).join('<br>'));
     add('Lines', `${program.lineCount.toLocaleString()} · ${program.seg.count.toLocaleString()} segments`);
     if (program.notes.length) add('Notes', program.notes.slice(0, 5).map((n) => `line ${n.line}: ${esc(n.msg)}`).join('<br>'));
     $('job-info').innerHTML = rows.join('');
@@ -144,16 +158,34 @@ export class App {
     ul.innerHTML = '';
     job.ops.forEach((op, i) => {
       const li = document.createElement('li');
-      const t = job.tools.get(op.tool);
-      const b = this.opBounds[i];
-      li.title = `${op.desc || op.name}\nlines ${op.lineStart}–${op.lineEnd}${b.segs ? `\nZ ${fmt(b.min[2])}..${fmt(b.max[2])}` : ''}${t?.name ? `\n${t.id} ${t.name}` : ''}`;
       li.innerHTML = `<input type="checkbox" checked><span class="sw" style="background:${opColor(i)}"></span>`
         + `<span class="name">${String(op.index).padStart(2, '0')} ${esc(op.name)}</span>`
-        + `<span class="meta"><span class="tool">${esc(op.tool !== null ? toolId(op.tool) : '?')}</span> ${op.lineStart}–${op.lineEnd}</span>`;
+        + `<span class="meta"><span class="tool">${esc(op.tool !== null ? toolId(op.tool) : '?')}</span> <span class="dur"></span> <span class="end"></span></span>`;
       li.querySelector('input').addEventListener('change', (e) => { this.viewer.toolpath.setOpVisible(i, e.target.checked); this.viewer.requestRender(); });
       li.querySelector('.name').addEventListener('click', () => this.scrubTo(op.lineEnd));
       li.querySelector('.name').addEventListener('dblclick', () => this.scrubTo(this.program.lineCount));
       ul.appendChild(li);
+    });
+    this._fillLegendTimes();
+  }
+
+  /** Duration and end time of each operation (offline: from the job start; live: clock time). */
+  _fillLegendTimes() {
+    const { job } = this;
+    const times = opTimes(this.estimate, job.ops);
+    const live = this.liveEta;
+    const curT = live ? this.estimate.lineTime[Math.min(this.scrubLine, this.program.lineCount)] ?? 0 : null;
+    const fin = live ? opFinishClock(times, curT, live.ratio ?? 1) : null;
+    document.querySelectorAll('#legend li').forEach((li, i) => {
+      const op = job.ops[i];
+      if (!op) return;
+      const t = job.tools.get(op.tool);
+      const b = this.opBounds[i];
+      li.title = `${op.desc || op.name}\nlines ${op.lineStart}–${op.lineEnd} · ${duration(times[i].s)} (${this.estimate.label})${b.segs ? `\nZ ${fmt(b.min[2])}..${fmt(b.max[2])}` : ''}${t?.name ? `\n${t.id} ${t.name}` : ''}`;
+      li.querySelector('.dur').textContent = duration(times[i].s);
+      const end = li.querySelector('.end');
+      end.textContent = live ? (fin[i] ? `ends ${clock(fin[i])}` : 'done') : `@${duration(times[i].end)}`;
+      end.title = live ? 'clock time this operation ends (live estimate)' : 'time from the start of the job when this operation ends';
     });
   }
 
@@ -163,9 +195,18 @@ export class App {
     const floorTxt = job.floor ? `below floor Z${fmt(job.floor.z, 3)}` : 'below floor (no stock/floor known)';
     $('warn-summary').innerHTML = `<div class="${c.belowFloor ? 'bad' : 'ok'}">${c.belowFloor} cut segments ${esc(floorTxt)}</div>`
       + `<div class="${c.outsideEnvelope ? 'bad' : 'ok'}">${c.outsideEnvelope} segments outside the envelope <span class="hint">(with the ${this.wcoSource} WCO)</span></div>`
-      + (c.other ? `<div class="bad">${c.other} program ${c.other === 1 ? 'finding' : 'findings'} (tool changes, op tools)</div>` : '');
+      + (c.other ? `<div class="bad">${c.other} program ${c.other === 1 ? 'finding' : 'findings'} (tool changes, op tools)</div>` : '')
+      + (this.placement?.items.length
+        ? this.placement.items.map((p) => `<div class="${p.assumed ? 'warnish' : 'bad'}">${esc(p.msg)}</div>`).join('')
+        : this.job.stock ? '<div class="ok">Stock clear of the BitSetter and on the spoilboard</div>' : '');
     const ul = $('warn-list');
     ul.innerHTML = '';
+    for (const p of (this.placement?.items ?? []).filter((x) => x.line)) {
+      const li = document.createElement('li');
+      li.textContent = `line ${p.line}: ${p.msg}`;
+      li.addEventListener('click', () => { this.scrubTo(p.line); this.pin(p.line); });
+      ul.appendChild(li);
+    }
     for (const w of warnings.items.slice(0, 200)) {
       const li = document.createElement('li');
       li.textContent = `line ${w.line}: ${w.msg}`;
@@ -179,7 +220,7 @@ export class App {
   _setupScrub() {
     const s = $('scrub');
     const mode = $('scrub-mode').value;
-    if (mode === 'line') { s.min = 0; s.max = this.program.lineCount; s.step = 1; s.value = this.program.lineCount; } else { s.min = 0; s.max = Math.ceil(this.program.totalTime); s.step = 1; s.value = s.max; }
+    if (mode === 'line') { s.min = 0; s.max = this.program.lineCount; s.step = 1; s.value = this.program.lineCount; } else { s.min = 0; s.max = Math.ceil(this.estimate.total); s.step = 1; s.value = s.max; }
     this.scrubTo(this.program.lineCount, { fromSlider: false });
   }
 
@@ -190,20 +231,21 @@ export class App {
     this.scrubLine = line;
     const seg = lastSegAtOrBefore(this.program.seg.line, line);
     this.viewer.toolpath.setScrub(seg);
-    const t = this.program.lineTime[line] ?? 0;
+    this.sim.goto(seg + 1, 0);
+    const t = this.estimate.lineTime[line] ?? 0;
     if (!fromSlider) $('scrub').value = $('scrub-mode').value === 'line' ? line : Math.round(t);
     // the op that contains the line itself (D11: the tool-change block between two ops is in neither)
     const opI = this.job.ops.findIndex((o) => line >= o.lineStart && line <= o.lineEnd);
     const op = this.job.ops[opI];
     const opText = op ? ` · ${String(op.index).padStart(2, '0')} ${op.name} ${toolId(op.tool)}` : this.job.ops.length && line >= this.job.ops[0].lineStart && line < this.program.lineCount ? ' · between operations' : '';
-    $('scrub-readout').textContent = `line ${line.toLocaleString()} / ${this.program.lineCount.toLocaleString()} · ${mmss(t)} / ${mmss(this.program.totalTime)}${opText}`;
+    $('scrub-readout').textContent = `line ${line.toLocaleString()} / ${this.program.lineCount.toLocaleString()} · ${duration(t)} / ${duration(this.estimate.total)}${this.estimate.source === 'rough' ? ' rough' : ''}${opText}`;
     document.querySelectorAll('#legend li').forEach((li, i) => li.classList.toggle('current', i === opI && line < this.program.lineCount));
     this.viewer.requestRender();
   }
 
   _onSlider() {
     const v = Number($('scrub').value);
-    const line = $('scrub-mode').value === 'line' ? v : lineAtTime(this.program.lineTime, v);
+    const line = $('scrub-mode').value === 'line' ? v : lineAtTime(this.estimate.lineTime, v);
     this.scrubTo(line, { fromSlider: true });
   }
 
@@ -214,13 +256,14 @@ export class App {
     if (!this.playing) return;
     if (this.scrubLine >= this.program.lineCount) this.scrubTo(0);
     let last = performance.now();
-    const speed = this.program.totalTime / 60; // whole job in about a minute
-    let t = this.program.lineTime[this.scrubLine] ?? 0;
+    const total = this.estimate.total;
+    const speed = total / 60; // whole job in about a minute
+    let t = this.estimate.lineTime[this.scrubLine] ?? 0;
     const step = (now) => {
       if (!this.playing) return;
       t += ((now - last) / 1000) * Math.max(speed, 1);
       last = now;
-      const line = t >= this.program.totalTime ? this.program.lineCount : lineAtTime(this.program.lineTime, t);
+      const line = t >= total ? this.program.lineCount : lineAtTime(this.estimate.lineTime, t);
       this.scrubTo(line);
       if (line >= this.program.lineCount) { this.playing = false; $('play').textContent = '▶'; return; }
       requestAnimationFrame(step);
@@ -292,6 +335,39 @@ export class App {
     this._showLine(line, -1, true);
   }
 
+  // ---------------------------------------------------------------------------------- time
+
+  _computeEstimate() {
+    this.estimate = bridgeEstimate(this.bridgeEst, this.program) ?? roughEstimate(this.program, this.header.rapidRate ?? 5000);
+  }
+
+  /** The bridge's planner estimate (GET /file/estimate) for the loaded program; null → rough. */
+  setEstimate(est) {
+    this.bridgeEst = est ?? null;
+    this._estForText = this.gcode?.text;
+    if (!this.program) return;
+    this._computeEstimate();
+    this._fillJobInfo();
+    this._fillLegendTimes();
+    const l = this.scrubLine;
+    this._setupScrub();
+    this.scrubTo(l);
+  }
+
+  /** Live ETA (normalized) or null; the legend shows clock end times while it is set. */
+  setLiveEta(eta) {
+    const had = !!this.liveEta;
+    this.liveEta = eta;
+    if (this.program && (eta || had)) this._fillLegendTimes();
+  }
+
+  _simStatus(s) {
+    const el = $('sim-status');
+    if (!el) return;
+    el.textContent = s.text;
+    el.className = `hint sim ${s.state}${s.skipped?.length ? ' partial' : ''}`;
+  }
+
   // ---------------------------------------------------------------------------------- export
 
   snapshotPng() {
@@ -323,6 +399,7 @@ export class App {
     tp.setMarkersVisible($('show-markers').checked);
     document.querySelectorAll('#legend li input').forEach((cb, i) => tp.setOpVisible(i, cb.checked));
     this.viewer.stockGroup.visible = $('show-stock').checked;
+    this.viewer.stockSim.group.visible = $('show-stock').checked;
     this.viewer.machine.group.visible = $('show-machine').checked;
     this.viewer.requestRender();
   }

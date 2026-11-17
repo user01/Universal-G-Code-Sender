@@ -124,6 +124,10 @@ try {
   const loaded = await live(page, () => ({ lines: window.ugsViewer.app.program.lineCount, ops: window.ugsViewer.app.job.ops.length, name: window.ugsViewer.app.gcode.name }));
   console.log('program', loaded);
   assert.ok(loaded.lines > 0);
+  // the bench answers GET /file/estimate: the timeline uses it instead of the rough figure
+  await waitLive(page, () => window.ugsViewer.app.estimate?.source === 'grbl-planner');
+  await waitLive(page, () => ['ready', 'empty', 'off'].includes(window.ugsViewer.app.sim.status.state), null, 60000);
+  console.log('sim', await live(page, () => window.ugsViewer.app.sim.status.text));
 
   // ---- Claude probes Z with the BitZero: probe hit marker, origin record moves the work zero
   const wcoBefore = await live(page, () => window.ugsViewer.app.wco.slice());
@@ -144,6 +148,12 @@ try {
   await frame(page, [wco[0] + 203, wco[1] + 46, wco[2] - 19], 105, [0.25, -0.6, 1]);
   await shot(page, 'live-03-streaming', 'Streaming OP 04 (lines 17560…): live tool, trail of the actual path, planned position at the acked line, progress on the scrubber');
   console.log('mid', mid);
+  // eta records while streaming: the ETA line in the panel and the pill over the view
+  await waitLive(page, () => window.ugsViewer.live.state.eta && !document.getElementById('eta-pill').hidden);
+  const etaText = await live(page, () => document.getElementById('eta-pill').textContent);
+  console.log('eta', etaText);
+  assert.match(etaText, /job ≈ \d\d:\d\d/);
+  assert.match(etaText, /next tool change \(T21\)/);
   const waiting = await streamDone;
   assert.equal(waiting.event, 'waiting');
   await waitLive(page, () => /Tool change: load T21/.test(document.getElementById('banners').textContent));

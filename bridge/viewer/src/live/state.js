@@ -6,10 +6,15 @@
 //   applyJobState(state, journal|null)   GET /job/state (404 → null)
 //   applyRecord(state, LogRecord)        each record from WS /events (backlog first, then live)
 // Each returns a Set of what changed: 'controller', 'trail', 'wco', 'stream', 'probes', 'banners',
-// 'authority', 'connection', 'file', 'tool', 'job'. The UI redraws only those parts.
+// 'authority', 'connection', 'file', 'tool', 'job', 'eta'. The UI redraws only those parts.
+//
+// ETA (the plugin's live estimate): `eta` in GET /job/state, and records of kind `eta` (or `event`
+// with data.event 'eta', or a `job` record carrying data.eta). Normalized by data/estimate.js.
 //
 // Coordinates: GRBL reports machine positions (MPos) and the work offset (WCO); work = MPos − WCO.
 // The trail and probe hits are kept in machine coordinates, so a WCO change doesn't move them.
+
+import { normalizeEta } from '../data/estimate.js';
 
 /** GRBL 1.1 alarm texts (short). */
 export const GRBL_ALARMS = {
@@ -46,6 +51,7 @@ export function createLiveState({ trailMax = 50000 } = {}) {
     trail: { pts: new Float32Array(trailMax * 3), n: 0, max: trailMax, version: 0 },
     stream: { state: 'idle', file: null, sha256: null, lineSent: null, lineAcked: null, linesTotal: null, lineExec: null },
     journal: null, // GET /job/state summary
+    eta: null, // normalized live ETA (data/estimate.js normalizeEta), null when unknown
     job: null, // last `job` record data
     file: null, // {path, sha256, lines} of the program loaded in UGS
     tool: { current: null },
@@ -225,6 +231,8 @@ export function applyStatus(s, b) {
 /** GET /job/state (the journal), or null for 404. */
 export function applyJobState(s, j) {
   const changes = new Set(['job']);
+  const eta = j ? normalizeEta(j.eta) : null;
+  if (eta || s.eta) { s.eta = eta; changes.add('eta'); }
   s.journal = j ? { stream: j.stream, line_acked: j.line_acked, line_done: j.line_done, operation: j.operation ?? null, tool: j.tool ?? null, sha256: j.file?.sha256 ?? null, lines: j.file?.lines ?? null } : null;
   if (j && !streaming(s)) {
     if (!s.stream.linesTotal && j.file?.lines) s.stream.linesTotal = j.file.lines;
@@ -244,6 +252,11 @@ export function applyRecord(s, rec) {
   switch (rec.kind) {
     case 'status':
       applyController(s, d, changes);
+      break;
+
+    case 'eta':
+      s.eta = normalizeEta(d.eta ?? d);
+      changes.add('eta');
       break;
 
     case 'session':
@@ -294,6 +307,7 @@ export function applyRecord(s, rec) {
     }
 
     case 'event':
+      if (d.type === 'eta' || d.event === 'eta') { s.eta = normalizeEta(d.eta ?? d); changes.add('eta'); break; }
       switch (d.type) {
         case 'alarm': {
           const code = typeof d.code === 'number' ? d.code : s.lastAlarmCode;
@@ -376,6 +390,8 @@ export function applyRecord(s, rec) {
 
     case 'job':
       s.job = { ...d };
+      if (d.eta) { s.eta = normalizeEta(d.eta); changes.add('eta'); }
+      if (d.event === 'stopped' || d.event === 'completed') { s.eta = null; changes.add('eta'); }
       if (d.event === 'started' || d.event === 'resume_started') { s.stream.state = 'running'; changes.add('stream'); }
       else if (d.event === 'paused') { s.stream.state = 'paused'; changes.add('stream'); }
       else if (d.event === 'stopped' || d.event === 'completed') { s.stream.state = d.event === 'completed' ? 'completed' : 'canceled'; s.stream.lineExec = null; changes.add('stream'); }
